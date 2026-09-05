@@ -1,0 +1,200 @@
+<Window x:Class="ForzavistaFreeRoam.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="Forzavista Free Roam" Height="700" Width="840"
+        MinHeight="620" MinWidth="780"
+        Icon="/assets/Icon/Forzavista.ico"
+        Background="{StaticResource WinBg}"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Ideal"
+        StateChanged="Window_StateChanged">
+
+  <shell:WindowChrome.WindowChrome>
+    <shell:WindowChrome CaptionHeight="34"
+                        ResizeBorderThickness="6"
+                        CornerRadius="0"
+                        GlassFrameThickness="0"
+                        UseAeroCaptionButtons="False"/>
+  </shell:WindowChrome.WindowChrome>
+
+  <!-- Outer border gives the borderless window a crisp edge -->
+  <Border x:Name="RootBorder" Background="{StaticResource AppGrad}"
+          BorderBrush="{StaticResource Line}" BorderThickness="1">
+    <Grid x:Name="RootGrid" TextElement.Foreground="{StaticResource Ink}">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+      </Grid.RowDefinitions>
+
+      <!-- ===================== TITLE BAR ===================== -->
+      <StackPanel Grid.Row="0">
+        <Border Background="{StaticResource TitleBarGrad}" Height="34">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- App name (left) -->
+            <TextBlock Grid.Column="0" VerticalAlignment="Center" Margin="14,0,0,0"
+                       FontFamily="{StaticResource DisplayFont}" FontSize="15"
+                       Foreground="{StaticResource Pink}" Text="FORZAVISTA"/>
+
+            <!-- Caption buttons (right) -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top" HorizontalAlignment="Right">
+              <Button x:Name="MinimizeButton" Style="{StaticResource CaptionButton}" Height="34"
+                      Content="&#xE921;" ToolTip="Minimize" Click="MinimizeButton_Click"/>
+              <Button x:Name="MaximizeButton" Style="{StaticResource CaptionButton}" Height="34"
+                      Content="&#xE922;" ToolTip="Maximize" Click="MaximizeButton_Click"/>
+              <Button x:Name="CloseButton" Style="{StaticResource CaptionCloseButton}" Height="34"
+                      Content="&#xE8BB;" ToolTip="Close" Click="CloseButton_Click"/>
+            </StackPanel>
+          </Grid>
+        </Border>
+        <!-- Fading pink brand line -->
+        <Border Height="2" Background="{StaticResource PinkAccentLine}"/>
+      </StackPanel>
+
+      <!-- ===================== HEADER ===================== -->
+      <Border Grid.Row="1" Background="{StaticResource CardHeadGrad}" Padding="22,10"
+              BorderBrush="{StaticResource Hairline}" BorderThickness="0,0,0,1">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <Image Grid.Column="0" Source="/assets/Logo/FMLogo.png" Height="46" Stretch="Uniform"
+                 RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center"/>
+          <TextBlock Grid.Column="1" Text="Enables max car detail and allows all doors to be opened in free roam"
+                     Foreground="{StaticResource Dim}" FontSize="12.5" TextWrapping="Wrap"
+                     VerticalAlignment="Center" Margin="18,0,16,0"/>
+          <TextBlock Grid.Column="2" x:Name="GameStatusText" Text="checking game…"
+                     Foreground="{StaticResource Dim}" FontSize="12.5"
+                     HorizontalAlignment="Right" VerticalAlignment="Center"/>
+        </Grid>
+      </Border>
+
+      <!-- ===================== BODY ===================== -->
+      <Grid Grid.Row="2" Margin="18">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="18"/>
+          <ColumnDefinition Width="322"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- ===== LEFT: panels ===== -->
+        <Border Grid.Column="0" Style="{StaticResource CardBorder}">
+          <Grid>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="*"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Border Grid.Row="0" Style="{StaticResource CardHeadStrip}">
+              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Border Style="{StaticResource HeadAccent}"/>
+                <TextBlock Style="{StaticResource CardTitle}" Text="CAR PANELS"/>
+              </StackPanel>
+            </Border>
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="14,6,10,6">
+              <Grid x:Name="PanelGrid">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+              </Grid>
+            </ScrollViewer>
+
+            <!-- Footer: all-panel actions. EXPLODE/IMPLODE share the top row (each half-width,
+                 wide enough that appended hotkey labels never clip); RESET spans below. -->
+            <Border Grid.Row="2" BorderBrush="{StaticResource Hairline}" BorderThickness="0,1,0,0"
+                    Background="#22000000" Padding="14,12">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto"/>
+                  <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid Grid.Row="0">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="12"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <Button x:Name="ExplodeButton" Grid.Column="0" Content="EXPLODE" Style="{StaticResource PinkFilled}"
+                          Height="40" Padding="8,0" IsEnabled="False" ToolTip="Open all panels"/>
+                  <Button x:Name="ImplodeButton" Grid.Column="2" Content="IMPLODE" Style="{StaticResource PinkButton}"
+                          Height="40" Padding="8,0" IsEnabled="False"
+                          ToolTip="Close all panels and clear the presentation flag"/>
+                </Grid>
+                <Button x:Name="ResetButton" Grid.Row="1" Content="RESET STATE" Style="{StaticResource GhostButton}"
+                        Height="38" Margin="0,10,0,0" Padding="8,0" IsEnabled="False"
+                        ToolTip="Clear the presentation flag"/>
+              </Grid>
+            </Border>
+          </Grid>
+        </Border>
+
+        <!-- ===== RIGHT: quick actions / display / hotkeys / status ===== -->
+        <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" Padding="0,0,2,0">
+          <StackPanel>
+
+            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,16">
+              <StackPanel>
+                <Border Style="{StaticResource CardHeadStrip}">
+                  <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Style="{StaticResource HeadAccent}"/>
+                    <TextBlock Style="{StaticResource CardTitle}" Text="DISPLAY"/>
+                  </StackPanel>
+                </Border>
+                <StackPanel Margin="14,12,14,14">
+                  <Button x:Name="MaxDetailButton" Content="MAX DETAIL: OFF" Style="{StaticResource GhostButton}" Height="42" IsEnabled="False"/>
+                  <TextBlock Style="{StaticResource Hint}" Text="Forces full Autovista car detail (open-panel geometry). Toggle off to restore normal free roam."/>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,16">
+              <StackPanel>
+                <Border Style="{StaticResource CardHeadStrip}">
+                  <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Style="{StaticResource HeadAccent}"/>
+                    <TextBlock Style="{StaticResource CardTitle}" Text="HOTKEYS"/>
+                  </StackPanel>
+                </Border>
+                <StackPanel Margin="14,12,14,14">
+                  <Button x:Name="BindModeButton" Content="BIND HOTKEYS: OFF" Style="{StaticResource GhostButton}" Height="38" Click="BindMode_Click"/>
+                  <Button x:Name="ClearHotkeysButton" Content="Clear all hotkeys" Style="{StaticResource GhostButton}" Height="32" Margin="0,10,0,0" Click="ClearHotkeys_Click"/>
+                  <TextBlock Style="{StaticResource Hint}" Text="Turn on, click an action, then press a key (Ctrl / Alt / Shift + key allowed). Right-click an action to clear it. Hotkeys work while the game is focused and are captured globally — pick keys you don't use for driving."/>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorder}">
+              <StackPanel>
+                <Border Style="{StaticResource CardHeadStrip}">
+                  <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Style="{StaticResource HeadAccent}"/>
+                    <TextBlock Style="{StaticResource CardTitle}" Text="STATUS"/>
+                  </StackPanel>
+                </Border>
+                <Border Margin="14,12,14,14" Background="{StaticResource Card2}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8" Padding="12,10">
+                  <TextBlock x:Name="ControlsStatusText" Text="checking…" Foreground="{StaticResource Dim}"
+                             FontFamily="Consolas" FontSize="11.5" TextWrapping="Wrap" MinHeight="46"/>
+                </Border>
+              </StackPanel>
+            </Border>
+
+          </StackPanel>
+        </ScrollViewer>
+      </Grid>
+    </Grid>
+  </Border>
+</Window>

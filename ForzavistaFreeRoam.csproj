@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>1.0.0</Version>
+    <Product>Forzavista Free Roam</Product>
+    <Authors>Forzavista Free Roam contributors</Authors>
+    <Description>External Free Roam car-panel control menu.</Description>
+    <Copyright>Copyright (c) 2026 Forzavista Free Roam contributors</Copyright>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>assets\Icon\Forzavista.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="tools\**\*.cs" />
+    <Compile Remove="bridge\**\*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="assets\Logo\FMLogo.png" />
+    <Resource Include="assets\Icon\Forzavista.ico" />
+    <Resource Include="assets\Fonts\go3v2.ttf" />
+  </ItemGroup>
+</Project>
