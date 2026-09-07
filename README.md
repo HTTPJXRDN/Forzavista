@@ -48,7 +48,7 @@ JXRDN (Me) for designing the UI and RE, GPT 5.6 for making probes and coding a f
 
 <img width="2160" height="1215" alt="Forza Horizon 6 9_5_2026 10_14_28 AM_compressed" src="https://github.com/user-attachments/assets/d0a00a61-5dc3-483b-ab85-6240a687e2a9" />
 
-<img width="2160" height="1215" alt="Forza Horizon 6 9_5_2026 10_14_15 AM_compressed" src="https://github.com/user-attachments/assets/35f74866-4448-4bf9-9bdb-bc93c38261db" />
+<img width="3840" height="2160" alt="Forza Horizon 6 9_7_2026 5_50_48 PM" src="https://github.com/user-attachments/assets/1807586d-c790-45b3-9b0d-ced8be216839" />
 
 <img width="3840" height="2160" alt="Forza Horizon 6 9_2_2026 8_36_34 PM_compressed" src="https://github.com/user-attachments/assets/c3a8a905-08b9-4f4d-ba14-805b8228dad4" />
 
