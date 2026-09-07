@@ -37,6 +37,9 @@ Version 1.1.1
 
 Unknown game builds are rejected until their compatibility has been verified.
 
+## Credits:
+JXRDN (Me) for designing the UI and RE, GPT 5.6 for making probes and coding a functional tool.
+
 ## Here is the tool
 
 <img width="1260" height="1071" alt="image" src="https://github.com/user-attachments/assets/689be984-60c3-4fba-85b4-1906d19a1e80" />
