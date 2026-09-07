@@ -37,8 +37,6 @@ Version 1.1.0
 
 Unknown game builds are rejected until their compatibility has been verified.
 
-See [CHANGELOG.md](CHANGELOG.md) for release history.
-
 ## Here is the tool
 
 <img width="1260" height="1071" alt="image" src="https://github.com/user-attachments/assets/689be984-60c3-4fba-85b4-1906d19a1e80" />
