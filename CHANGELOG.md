@@ -2,6 +2,15 @@
 
 All notable changes to Forzavista Free Roam are documented here.
 
+## 1.1.1 - 2026-09-07
+
+### Fixed
+
+- Microsoft Store/Xbox status checks now reuse a validated controller lookup
+  instead of repeating the large fallback scan for every poll and action.
+- Door and panel commands no longer stall behind repeated Xbox discovery work.
+- Max Detail requests are no longer delayed by the Xbox status scan.
+
 ## 1.1.0 - 2026-09-07
 
 ### Added

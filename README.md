@@ -1,6 +1,6 @@
 # Forzavista Free Roam
 
-Version 1.1.0
+Version 1.1.1
 
 ## Features
 
@@ -17,7 +17,7 @@ Version 1.1.0
 
 - Start the game
 - Enter Free Roam with a car loaded
-- Start `Forzavista.exe`
+- Start `ForzavistaFreeRoam.exe`
 - The status area confirms when the current session is ready
 - Available panel controls depend on the selected car
 - To create a binding, enable the keyboard or controller bind mode, click an
@@ -36,6 +36,8 @@ Version 1.1.0
 - Microsoft Store/Xbox app 3.440.853.0
 
 Unknown game builds are rejected until their compatibility has been verified.
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Here is the tool
 

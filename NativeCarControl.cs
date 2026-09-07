@@ -12,6 +12,7 @@ internal sealed record NativeControlStatus(bool Ready, bool PresentationActive, 
 internal static class NativeCarControl
 {
     private static readonly string[] GameProcessNames = ["forzahorizon6"];
+    private static DynamicContextHint? _dynamicContextHint;
 
     internal static bool IsGameProcessName(string processName) =>
         GameProcessNames.Contains(processName, StringComparer.OrdinalIgnoreCase);
@@ -432,6 +433,41 @@ internal static class NativeCarControl
     private static NativeContext LocateDynamic(int processId, SafeProcessHandle handle,
         ulong module, uint sizeOfImage, GameBuildProfile profile)
     {
+        // Once a package-build chain has been fully verified, reuse its stable
+        // callback owner/controller for the rest of that process.  Revalidate
+        // the owner identity every time and fall back to discovery if the game
+        // rebuilt the objects (for example after a session transition).
+        var cached = _dynamicContextHint;
+        if (cached is not null && cached.ProcessId == processId && cached.Module == module)
+        {
+            try
+            {
+                var ownerBytes = Read(handle, cached.CallbackOwner, 0x50);
+                if (BitConverter.ToUInt64(ownerBytes, 0) == module + profile.OwnerVtableRva &&
+                    BitConverter.ToUInt64(ownerBytes, 0x40) == cached.CarController)
+                    return new NativeContext(processId, module, cached.CallbackOwner,
+                        cached.CarController, profile, handle);
+            }
+            catch { }
+            _dynamicContextHint = null;
+        }
+
+        // In the Microsoft Store layout the service registry used by this
+        // subscription chain lives next to the render-system object.  Resolve
+        // that stable relationship before considering the large .data scan.
+        if (profile.RenderSystemGlobalRva is { } renderGlobalRva)
+        {
+            try
+            {
+                var renderGlobal = ReadUInt64(handle, module + renderGlobalRva);
+                var renderSystem = ReadUInt64(handle, renderGlobal + 0x1D8);
+                var direct = TryLocateDynamicRoot(processId, handle, module,
+                    renderSystem + 0x80, profile);
+                if (direct is not null) return direct;
+            }
+            catch { }
+        }
+
         var header = Read(handle, module, 0x1000);
         var peOffset = BitConverter.ToInt32(header, 0x3C);
         var sectionCount = BitConverter.ToUInt16(header, peOffset + 6);
@@ -529,12 +565,98 @@ internal static class NativeCarControl
                         if (BitConverter.ToUInt64(ownerBytes, 0) != module + profile.OwnerVtableRva) continue;
                         var carController = BitConverter.ToUInt64(ownerBytes, 0x40);
                         if (!HeapPointer(carController)) continue;
+                        _dynamicContextHint = new(processId, module, callbackOwner, carController);
                         return new NativeContext(processId, module, callbackOwner, carController, profile, handle);
                     }
                 }
             }
         }
         throw new InvalidOperationException("supported convertible not active");
+    }
+
+    private static NativeContext? TryLocateDynamicRoot(int processId, SafeProcessHandle handle,
+        ulong module, ulong root, GameBuildProfile profile)
+    {
+        static bool HeapPointer(ulong value) =>
+            value is >= 0x10000 and < 0x0000800000000000 && (value & 7) == 0;
+        if (!HeapPointer(root)) return null;
+
+        ulong table;
+        ulong slots;
+        try
+        {
+            table = ReadUInt64(handle, root + 8);
+            slots = HeapPointer(table) ? ReadUInt64(handle, table + 0xE8) : 0;
+        }
+        catch { return null; }
+        if (!HeapPointer(slots)) return null;
+
+        for (var slotIndex = 0; slotIndex < 0x400; slotIndex++)
+        {
+            ulong owner;
+            try { owner = ReadUInt64(handle, slots + (ulong)slotIndex * 0x10); }
+            catch { continue; }
+            if (!HeapPointer(owner)) continue;
+
+            ulong begin, end, capacity;
+            try
+            {
+                begin = ReadUInt64(handle, owner + 0xD8);
+                end = ReadUInt64(handle, owner + 0xE0);
+                capacity = ReadUInt64(handle, owner + 0xE8);
+            }
+            catch { continue; }
+            if (!HeapPointer(begin) || end < begin || capacity < end ||
+                ((end - begin) & 7) != 0 || end - begin is 0 or > 0x8000) continue;
+
+            var count = checked((int)((end - begin) / 8));
+            for (var item = 0; item < count; item++)
+            {
+                ulong subscription;
+                try { subscription = ReadUInt64(handle, begin + (ulong)item * 8); }
+                catch { continue; }
+                if (!HeapPointer(subscription)) continue;
+
+                byte[] subscriptionData;
+                try { subscriptionData = Read(handle, subscription, 0xB0); }
+                catch { continue; }
+                if (BitConverter.ToUInt64(subscriptionData, 0) != module + profile.SubscriptionVtableRva ||
+                    BitConverter.ToInt32(subscriptionData, 0xA0) != ConvertibleCommand) continue;
+                var mappingCount = BitConverter.ToInt32(subscriptionData, 0x44) & 0x3FF;
+                var mappingTable = BitConverter.ToUInt64(subscriptionData, 0x38);
+                if (mappingCount is <= 0 or > 64 || !HeapPointer(mappingTable)) continue;
+
+                byte[] mappings;
+                try { mappings = Read(handle, mappingTable, checked(mappingCount * 0x10)); }
+                catch { continue; }
+                for (var mappingIndex = 0; mappingIndex < mappingCount; mappingIndex++)
+                {
+                    var wrapperAddress = BitConverter.ToUInt64(mappings, mappingIndex * 0x10 + 8);
+                    if (!HeapPointer(wrapperAddress)) continue;
+                    byte[] wrapper;
+                    try { wrapper = Read(handle, wrapperAddress, 0x68); }
+                    catch { continue; }
+                    if (BitConverter.ToUInt64(wrapper, 0) != module + profile.CallbackVtableRva ||
+                        BitConverter.ToUInt64(wrapper, 0x20) != module + profile.CallbackInterfaceVtableRva ||
+                        BitConverter.ToUInt64(wrapper, 0x28) != module + profile.LambdaVtableRva ||
+                        BitConverter.ToUInt64(wrapper, 0x30) != module + profile.HandlerRva ||
+                        BitConverter.ToUInt64(wrapper, 0x60) != wrapperAddress + 0x28) continue;
+
+                    var callbackOwner = BitConverter.ToUInt64(wrapper, 0x40);
+                    if (!HeapPointer(callbackOwner)) continue;
+                    byte[] ownerBytes;
+                    try { ownerBytes = Read(handle, callbackOwner, 0x50); }
+                    catch { continue; }
+                    if (BitConverter.ToUInt64(ownerBytes, 0) != module + profile.OwnerVtableRva) continue;
+                    var carController = BitConverter.ToUInt64(ownerBytes, 0x40);
+                    if (!HeapPointer(carController)) continue;
+
+                    _dynamicContextHint = new(processId, module, callbackOwner, carController);
+                    return new NativeContext(processId, module, callbackOwner, carController, profile, handle);
+                }
+            }
+        }
+        return null;
     }
 
     private static byte[] BuildCall(ulong owner, ulong handler)
@@ -627,6 +749,9 @@ internal static class NativeCarControl
     {
         public void Dispose() => Handle.Dispose();
     }
+
+    private sealed record DynamicContextHint(int ProcessId, ulong Module, ulong CallbackOwner,
+        ulong CarController);
 
     private sealed record AnimationTarget(ulong Vehicle, ulong Component);
 
