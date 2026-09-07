@@ -17,7 +17,7 @@ Version 1.1.1
 
 - Start the game
 - Enter Free Roam with a car loaded
-- Start `ForzavistaFreeRoam.exe`
+- Start `Forzavista.exe`
 - The status area confirms when the current session is ready
 - Available panel controls depend on the selected car
 - To create a binding, enable the keyboard or controller bind mode, click an
