@@ -64,10 +64,29 @@ public partial class MainWindow : Window
     private string? _capturingAction;
     private IntPtr _hwnd;
     private HwndSource? _source;
+    private const uint EventSystemForeground = 0x0003;
+    private const uint WinEventOutOfContext = 0x0000;
+    private WinEventDelegate? _foregroundChangedDelegate;
+    private IntPtr _foregroundHook;
+
+    // ----- Xbox controller bindings -----
+    private readonly DispatcherTimer _controllerTimer = new() { Interval = TimeSpan.FromMilliseconds(35) };
+    private readonly Dictionary<string, uint> _controllerBindings = new(StringComparer.OrdinalIgnoreCase);
+    private bool _controllerBindMode;
+    private string? _capturingControllerAction;
+    private bool _controllerCaptureArmed;
+    private uint _controllerCaptureMask;
+    private DateTime _controllerCaptureStartedUtc;
+    private uint _previousControllerMask;
+    private int? _activeControllerIndex;
 
     private static string HotkeyPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "ForzavistaFreeRoam", "hotkeys.json");
+
+    private static string ControllerBindingPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "ForzavistaFreeRoam", "controller-bindings.json");
 
     private Brush Good => (Brush)FindResource("Good");
     private Brush Warn => (Brush)FindResource("Warn");
@@ -87,9 +106,16 @@ public partial class MainWindow : Window
         _actionButtons.Add(ResetButton);
         _actionButtons.Add(MaxDetailButton);
         LoadHotkeys();
+        LoadControllerBindings();
         RefreshAllLabels();
         _statusTimer.Tick += async (_, _) => await PollStatusAsync();
-        Loaded += async (_, _) => { await PollStatusAsync(); _statusTimer.Start(); };
+        _controllerTimer.Tick += ControllerTimer_Tick;
+        Loaded += async (_, _) =>
+        {
+            await PollStatusAsync();
+            _statusTimer.Start();
+            _controllerTimer.Start();
+        };
         Closing += (_, _) => RestoreOnExit();
     }
 
@@ -99,12 +125,21 @@ public partial class MainWindow : Window
         _hwnd = new WindowInteropHelper(this).Handle;
         _source = HwndSource.FromHwnd(_hwnd);
         _source?.AddHook(WndProc);
+        _foregroundChangedDelegate = ForegroundWindowChanged;
+        _foregroundHook = SetWinEventHook(EventSystemForeground, EventSystemForeground,
+            IntPtr.Zero, _foregroundChangedDelegate, 0, 0, WinEventOutOfContext);
         RegisterAllHotkeys();
     }
 
     protected override void OnClosed(EventArgs e)
     {
         UnregisterAllHotkeys();
+        if (_foregroundHook != IntPtr.Zero)
+        {
+            UnhookWinEvent(_foregroundHook);
+            _foregroundHook = IntPtr.Zero;
+        }
+        _foregroundChangedDelegate = null;
         _source?.RemoveHook(WndProc);
         base.OnClosed(e);
     }
@@ -225,13 +260,15 @@ public partial class MainWindow : Window
     {
         var action = (string)((Button)sender).Tag;
         if (_bindMode) { BeginCapture(action); return; }
+        if (_controllerBindMode) { BeginControllerCapture(action); return; }
         await InvokeActionAsync(action);
     }
 
     private void ActionButton_RightClick(object sender, MouseButtonEventArgs e)
     {
-        if (!_bindMode) return;
-        ClearBinding((string)((Button)sender).Tag);
+        var action = (string)((Button)sender).Tag;
+        if (_bindMode) ClearBinding(action);
+        else if (_controllerBindMode) ClearControllerBinding(action);
     }
 
     private Task InvokeActionAsync(string action) => action.ToLowerInvariant() switch
@@ -374,9 +411,10 @@ public partial class MainWindow : Window
                 _openPanels.Clear();
                 _ownsPresentationFlag = false;
             }
-            if (_capturingAction is null) SetControlsStatus(status.Message, status.Ready ? Good : Warn);
+            if (_capturingAction is null && _capturingControllerAction is null)
+                SetControlsStatus(status.Message, status.Ready ? Good : Warn);
 
-            if (_bindMode) { SetActionsEnabled(true); return; }
+            if (_bindMode || _controllerBindMode) { SetActionsEnabled(true); return; }
             SetActionsEnabled(false);
             if (status.Ready)
             {
@@ -397,6 +435,13 @@ public partial class MainWindow : Window
     {
         using var process = Process.GetProcessesByName("forzahorizon6").OrderByDescending(p => p.StartTime).FirstOrDefault();
         if (process is null) { GameStatusText.Text = "game not running"; GameStatusText.Foreground = Dim; return; }
+        var liveBuild = await Task.Run(NativeCarControl.GetCurrentBuildName);
+        if (liveBuild is not null)
+        {
+            GameStatusText.Text = $"{liveBuild} — PID {process.Id}";
+            GameStatusText.Foreground = Good;
+            return;
+        }
         string? path;
         try { path = process.MainModule?.FileName; } catch { path = null; }
         if (string.IsNullOrWhiteSpace(path)) { GameStatusText.Text = $"running (PID {process.Id})"; GameStatusText.Foreground = Warn; return; }
@@ -406,9 +451,11 @@ public partial class MainWindow : Window
         {
             _hashedPath = path;
             _hashedWriteTimeUtc = writeTimeUtc;
-            _hashedDigest = await Task.Run(() => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))));
+            try { _hashedDigest = await Task.Run(() => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)))); }
+            catch (UnauthorizedAccessException) { _hashedDigest = null; }
+            catch (IOException) { _hashedDigest = null; }
         }
-        var supported = string.Equals(_hashedDigest, NativeCarControl.SupportedSha256, StringComparison.OrdinalIgnoreCase);
+        var supported = NativeCarControl.IsSupportedDigest(_hashedDigest);
         GameStatusText.Text = supported ? $"supported build — PID {process.Id}" : $"unsupported build — PID {process.Id}";
         GameStatusText.Foreground = supported ? Good : Warn;
     }
@@ -436,14 +483,44 @@ public partial class MainWindow : Window
 
     private void BindMode_Click(object sender, RoutedEventArgs e)
     {
+        if (_controllerBindMode) SetControllerBindMode(false);
         _bindMode = !_bindMode;
         if (!_bindMode && _capturingAction is not null) CancelCapture();
-        BindModeButton.Content = _bindMode ? "BIND HOTKEYS: ON" : "BIND HOTKEYS: OFF";
+        BindModeButton.Content = _bindMode ? "BIND KEYBOARD: ON" : "BIND KEYBOARD: OFF";
         BindModeButton.Style = (Style)FindResource(_bindMode ? "PinkFilled" : "GhostButton");
         if (_bindMode)
         {
             SetActionsEnabled(true);
             SetControlsStatus("bind mode on — click an action, then press a key (right-click clears)", Warn);
+        }
+        else
+        {
+            _ = PollStatusAsync();
+        }
+    }
+
+    private void ControllerBindMode_Click(object sender, RoutedEventArgs e)
+    {
+        if (_bindMode)
+        {
+            _bindMode = false;
+            if (_capturingAction is not null) CancelCapture();
+            BindModeButton.Content = "BIND KEYBOARD: OFF";
+            BindModeButton.Style = (Style)FindResource("GhostButton");
+        }
+        SetControllerBindMode(!_controllerBindMode);
+    }
+
+    private void SetControllerBindMode(bool enabled)
+    {
+        _controllerBindMode = enabled;
+        if (!enabled) CancelControllerCapture(showMessage: false);
+        ControllerBindModeButton.Content = enabled ? "BIND CONTROLLER: ON" : "BIND CONTROLLER: OFF";
+        ControllerBindModeButton.Style = (Style)FindResource(enabled ? "PinkFilled" : "GhostButton");
+        if (enabled)
+        {
+            SetActionsEnabled(true);
+            SetControlsStatus("controller bind mode on — click an action, release the controls, then press a button or combination", Warn);
         }
         else
         {
@@ -458,6 +535,14 @@ public partial class MainWindow : Window
         RegisterAllHotkeys();
         RefreshAllLabels();
         SetControlsStatus("all hotkeys cleared", Good);
+    }
+
+    private void ClearControllerBindings_Click(object sender, RoutedEventArgs e)
+    {
+        _controllerBindings.Clear();
+        SaveControllerBindings();
+        RefreshAllLabels();
+        SetControlsStatus("all controller bindings cleared", Good);
     }
 
     private void BeginCapture(string action)
@@ -505,10 +590,109 @@ public partial class MainWindow : Window
         SetControlsStatus($"cleared hotkey for '{GetBaseLabel(action)}'", Good);
     }
 
+    private void BeginControllerCapture(string action)
+    {
+        _capturingControllerAction = action;
+        _controllerCaptureArmed = false;
+        _controllerCaptureMask = 0;
+        SetControlsStatus($"release the controller, then press the Xbox button combination for '{GetBaseLabel(action)}'", Warn);
+    }
+
+    private void CancelControllerCapture(bool showMessage = true)
+    {
+        _capturingControllerAction = null;
+        _controllerCaptureArmed = false;
+        _controllerCaptureMask = 0;
+        if (showMessage) SetControlsStatus("controller binding cancelled", Dim);
+    }
+
+    private void ClearControllerBinding(string action)
+    {
+        if (!_controllerBindings.Remove(action)) return;
+        SaveControllerBindings();
+        RefreshLabel(action);
+        SetControlsStatus($"cleared controller binding for '{GetBaseLabel(action)}'", Good);
+    }
+
+    private void ControllerTimer_Tick(object? sender, EventArgs e)
+    {
+        try
+        {
+            if (!XboxControllerInput.TryGetFirstConnected(out var controllerIndex, out var currentMask))
+            {
+                _activeControllerIndex = null;
+                _previousControllerMask = 0;
+                return;
+            }
+
+            if (_activeControllerIndex != controllerIndex)
+            {
+                _activeControllerIndex = controllerIndex;
+                _previousControllerMask = currentMask;
+            }
+
+            if (_capturingControllerAction is not null)
+            {
+                CaptureControllerBinding(currentMask);
+                _previousControllerMask = currentMask;
+                return;
+            }
+
+            if (!_controllerBindMode && IsGameForeground())
+            {
+                var match = _controllerBindings
+                    .Where(binding => (currentMask & binding.Value) == binding.Value &&
+                                      (_previousControllerMask & binding.Value) != binding.Value)
+                    .OrderByDescending(binding => XboxControllerInput.ButtonCount(binding.Value))
+                    .FirstOrDefault();
+                if (!string.IsNullOrEmpty(match.Key)) _ = InvokeActionAsync(match.Key);
+            }
+            _previousControllerMask = currentMask;
+        }
+        catch
+        {
+            // Controller polling is optional and must never interrupt the menu.
+            _previousControllerMask = 0;
+        }
+    }
+
+    private void CaptureControllerBinding(uint currentMask)
+    {
+        if (!_controllerCaptureArmed)
+        {
+            if (currentMask == 0) _controllerCaptureArmed = true;
+            return;
+        }
+
+        if (_controllerCaptureMask == 0)
+        {
+            if (currentMask == 0) return;
+            _controllerCaptureMask = currentMask;
+            _controllerCaptureStartedUtc = DateTime.UtcNow;
+            return;
+        }
+
+        _controllerCaptureMask |= currentMask;
+        if (currentMask != 0 && DateTime.UtcNow - _controllerCaptureStartedUtc < TimeSpan.FromMilliseconds(250))
+            return;
+
+        var action = _capturingControllerAction!;
+        var binding = _controllerCaptureMask;
+        _capturingControllerAction = null;
+        _controllerCaptureArmed = false;
+        _controllerCaptureMask = 0;
+        _controllerBindings[action] = binding;
+        SaveControllerBindings();
+        RefreshLabel(action);
+        SetControlsStatus($"bound '{GetBaseLabel(action)}' → Xbox {XboxControllerInput.Display(binding)}", Good);
+    }
+
     private void RegisterAllHotkeys()
     {
         UnregisterAllHotkeys();
-        if (_hwnd == IntPtr.Zero) return;
+        // RegisterHotKey reserves the gesture across Windows. Reserve it only
+        // while the game owns the foreground window so other apps are unaffected.
+        if (_hwnd == IntPtr.Zero || _capturingAction is not null || !IsGameForeground()) return;
         var id = 1;
         foreach (var (action, hk) in _hotkeys)
         {
@@ -530,11 +714,37 @@ public partial class MainWindow : Window
         _hotkeyIdToAction.Clear();
     }
 
+    private void ForegroundWindowChanged(IntPtr hook, uint eventType, IntPtr hwnd,
+        int objectId, int childId, uint eventThread, uint eventTime)
+    {
+        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+        _ = Dispatcher.BeginInvoke(new Action(RegisterAllHotkeys));
+    }
+
+    private static bool IsGameForeground()
+    {
+        var foreground = GetForegroundWindow();
+        if (foreground == IntPtr.Zero) return false;
+        GetWindowThreadProcessId(foreground, out var processId);
+        if (processId == 0) return false;
+        try
+        {
+            using var process = Process.GetProcessById(checked((int)processId));
+            return NativeCarControl.IsGameProcessName(process.ProcessName);
+        }
+        catch { return false; }
+    }
+
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         if (msg == WM_HOTKEY && _capturingAction is null &&
             _hotkeyIdToAction.TryGetValue(wParam.ToInt32(), out var action))
         {
+            if (!IsGameForeground())
+            {
+                UnregisterAllHotkeys();
+                return IntPtr.Zero;
+            }
             handled = true;
             _ = Dispatcher.InvokeAsync(async () => await InvokeActionAsync(action));
         }
@@ -552,9 +762,11 @@ public partial class MainWindow : Window
     {
         if (!_buttonsByAction.TryGetValue(action, out var b)) return;
         var baseLabel = GetBaseLabel(action);
-        b.Content = _hotkeys.TryGetValue(action, out var hk)
-            ? $"{baseLabel}   [{Display(hk.Mods, hk.Key)}]"
-            : baseLabel;
+        var bindings = new List<string>();
+        if (_hotkeys.TryGetValue(action, out var hk)) bindings.Add(Display(hk.Mods, hk.Key));
+        if (_controllerBindings.TryGetValue(action, out var controller))
+            bindings.Add($"Xbox {XboxControllerInput.Display(controller)}");
+        b.Content = bindings.Count == 0 ? baseLabel : $"{baseLabel}   [{string.Join("] [", bindings)}]";
     }
 
     private void RefreshAllLabels()
@@ -630,8 +842,44 @@ public partial class MainWindow : Window
         catch { }
     }
 
+    private void LoadControllerBindings()
+    {
+        try
+        {
+            if (!File.Exists(ControllerBindingPath)) return;
+            var map = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(ControllerBindingPath));
+            if (map is null) return;
+            foreach (var (action, gesture) in map)
+                if (XboxControllerInput.TryParse(gesture, out var mask)) _controllerBindings[action] = mask;
+        }
+        catch { }
+    }
+
+    private void SaveControllerBindings()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(ControllerBindingPath)!);
+            var map = _controllerBindings.ToDictionary(kv => kv.Key, kv => XboxControllerInput.Display(kv.Value));
+            File.WriteAllText(ControllerBindingPath,
+                JsonSerializer.Serialize(map, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch { }
+    }
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+    private delegate void WinEventDelegate(IntPtr hook, uint eventType, IntPtr hwnd,
+        int objectId, int childId, uint eventThread, uint eventTime);
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr eventHook,
+        WinEventDelegate callback, uint processId, uint threadId, uint flags);
+    [DllImport("user32.dll")]
+    private static extern bool UnhookWinEvent(IntPtr hook);
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
 }

@@ -170,9 +170,11 @@
                   </StackPanel>
                 </Border>
                 <StackPanel Margin="14,12,14,14">
-                  <Button x:Name="BindModeButton" Content="BIND HOTKEYS: OFF" Style="{StaticResource GhostButton}" Height="38" Click="BindMode_Click"/>
-                  <Button x:Name="ClearHotkeysButton" Content="Clear all hotkeys" Style="{StaticResource GhostButton}" Height="32" Margin="0,10,0,0" Click="ClearHotkeys_Click"/>
-                  <TextBlock Style="{StaticResource Hint}" Text="Turn on, click an action, then press a key (Ctrl / Alt / Shift + key allowed). Right-click an action to clear it. Hotkeys work while the game is focused and are captured globally — pick keys you don't use for driving."/>
+                  <Button x:Name="BindModeButton" Content="BIND KEYBOARD: OFF" Style="{StaticResource GhostButton}" Height="38" Click="BindMode_Click"/>
+                  <Button x:Name="ControllerBindModeButton" Content="BIND CONTROLLER: OFF" Style="{StaticResource GhostButton}" Height="38" Margin="0,8,0,0" Click="ControllerBindMode_Click"/>
+                  <Button x:Name="ClearHotkeysButton" Content="Clear keyboard bindings" Style="{StaticResource GhostButton}" Height="32" Margin="0,10,0,0" Click="ClearHotkeys_Click"/>
+                  <Button x:Name="ClearControllerBindingsButton" Content="Clear controller bindings" Style="{StaticResource GhostButton}" Height="32" Margin="0,6,0,0" Click="ClearControllerBindings_Click"/>
+                  <TextBlock Style="{StaticResource Hint}" Text="Choose a bind mode, click an action, then press a key or Xbox button combination. Right-click an action to clear the selected binding type. Bindings fire only while the game is focused."/>
                 </StackPanel>
               </StackPanel>
             </Border>

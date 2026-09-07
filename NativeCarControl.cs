@@ -2,7 +2,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 using Microsoft.Win32.SafeHandles;
 
 namespace ForzavistaFreeRoam;
@@ -12,22 +11,34 @@ internal sealed record NativeControlStatus(bool Ready, bool PresentationActive, 
 
 internal static class NativeCarControl
 {
-    internal const string SupportedSha256 = "B62B5EC1933B2D11A6B80941AE0D2B38C4A5AAEFDD880E487453D178081D7B44";
+    private static readonly string[] GameProcessNames = ["forzahorizon6"];
+
+    internal static bool IsGameProcessName(string processName) =>
+        GameProcessNames.Contains(processName, StringComparer.OrdinalIgnoreCase);
+
+    internal static bool IsSupportedDigest(string? digest) => GameBuildProfiles.IsSupportedDigest(digest);
+
+    internal static string? GetCurrentBuildName()
+    {
+        using var game = TryGetGame();
+        if (game is null || !game.Responding) return null;
+        try
+        {
+            var moduleInfo = game.MainModule;
+            if (moduleInfo is null) return null;
+            using var handle = OpenProcess(ReadAccess, false, game.Id);
+            if (handle.IsInvalid) return null;
+            var identity = ReadModuleIdentity(handle, (ulong)moduleInfo.BaseAddress);
+            return GameBuildProfiles.MatchExecutable(moduleInfo.FileName,
+                identity.PeTimestamp, identity.SizeOfImage).Name;
+        }
+        catch { return null; }
+    }
 
     private const uint ReadAccess = 0x0010 | 0x0400;
     private const uint ActionAccess = 0x0002 | 0x0008 | 0x0010 | 0x0020 | 0x0400;
     private const uint MemCommitReserve = 0x3000, MemRelease = 0x8000, PageExecuteReadWrite = 0x40;
-    private const ulong RootRegistryRva = 0x0A81DD38, SlotIndexRva = 0x0AB04B9C;
-    private const ulong SubscriptionVtableRva = 0x07085C18;
-    private const ulong CallbackVtableRva = 0x066B9BF8, CallbackInterfaceVtableRva = 0x066B9C38;
-    private const ulong LambdaVtableRva = 0x06FE9D00, HandlerRva = 0x04A208A0, OwnerVtableRva = 0x06FE8E80;
-    private const ulong BooleanTriggerSetterRva = 0x00798F70;
-    private const ulong PresentationServiceGlobalRva = 0x0A86F4F8;
-    private const ulong PresentationEventHubGlobalRva = 0x0A86F5A0;
-    private const ulong PresentationServiceVtableRva = 0x068C7418;
-    private const ulong PresentationEventHubVtableRva = 0x069FCB78;
     private const int ConvertibleCommand = 0x10E;
-    private const ulong RenderSystemGlobalRva = 0x0A8D87D8;
     // Dynamic render-mode ids. Freeroam is the normal world mode. MaxDetail is the
     // mode the toggle switches to for full car detail (CarDrawAutovista=1).
     // ThreeTwoOne(3)/PreRace are the smallest scenarios known to carry it;
@@ -96,13 +107,20 @@ internal static class NativeCarControl
 
     private static string InspectPresentation(NativeContext context)
     {
-        var service = ReadUInt64(context.Handle, context.Module + PresentationServiceGlobalRva);
-        var eventHub = ReadUInt64(context.Handle, context.Module + PresentationEventHubGlobalRva);
+        var profile = context.Profile;
+        if (profile.PresentationServiceGlobalRva is not { } serviceGlobalRva ||
+            profile.PresentationEventHubGlobalRva is not { } eventHubGlobalRva ||
+            profile.PresentationServiceVtableRva is not { } serviceVtableRva ||
+            profile.PresentationEventHubVtableRva is not { } eventHubVtableRva)
+            return "unavailable";
+
+        var service = ReadUInt64(context.Handle, context.Module + serviceGlobalRva);
+        var eventHub = ReadUInt64(context.Handle, context.Module + eventHubGlobalRva);
         if (service == 0 && eventHub == 0) return "inactive";
         if (service < 0x10000 || eventHub < 0x10000)
             throw new InvalidOperationException("presentation state is incomplete");
-        if (ReadUInt64(context.Handle, service) != context.Module + PresentationServiceVtableRva ||
-            ReadUInt64(context.Handle, eventHub) != context.Module + PresentationEventHubVtableRva)
+        if (ReadUInt64(context.Handle, service) != context.Module + serviceVtableRva ||
+            ReadUInt64(context.Handle, eventHub) != context.Module + eventHubVtableRva)
             throw new InvalidOperationException("presentation object identity mismatch");
         return "active";
     }
@@ -111,14 +129,14 @@ internal static class NativeCarControl
     {
         using var context = Locate(action: true);
         byte[] expected = [0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83, 0xEC, 0x30];
-        if (!Read(context.Handle, context.Module + HandlerRva, expected.Length).SequenceEqual(expected))
+        if (!Read(context.Handle, context.Module + context.Profile.HandlerRva, expected.Length).SequenceEqual(expected))
             throw new InvalidOperationException("Native roof-handler signature mismatch.");
 
         var remote = (ulong)VirtualAllocEx(context.Handle, 0, 0x1000, MemCommitReserve, PageExecuteReadWrite);
         if (remote == 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "VirtualAllocEx");
         try
         {
-            var code = BuildCall(context.CallbackOwner, context.Module + HandlerRva);
+            var code = BuildCall(context.CallbackOwner, context.Module + context.Profile.HandlerRva);
             Write(context.Handle, remote, code);
             FlushInstructionCache(context.Handle, (nuint)remote, (nuint)code.Length);
             using var thread = CreateRemoteThread(context.Handle, 0, 0, (nuint)remote, 0, 0, out _);
@@ -143,10 +161,10 @@ internal static class NativeCarControl
             throw new InvalidOperationException("panel controls require active garage presentation");
         var component = ValidateAnimationComponent(context);
         byte[] expected = [0x48, 0x89, 0x5C, 0x24, 0x10, 0x56, 0x57, 0x41, 0x56, 0x48];
-        if (!Read(context.Handle, context.Module + BooleanTriggerSetterRva, expected.Length).SequenceEqual(expected))
+        if (!Read(context.Handle, context.Module + context.Profile.BooleanTriggerSetterRva, expected.Length).SequenceEqual(expected))
             throw new InvalidOperationException("Native panel-trigger signature mismatch.");
 
-        DispatchBooleanTrigger(context.Handle, component, context.Module + BooleanTriggerSetterRva,
+        DispatchBooleanTrigger(context.Handle, component, context.Module + context.Profile.BooleanTriggerSetterRva,
             Fnv1a(command.Trigger), command.Value);
         return $"{command.Trigger}={(command.Value ? "open" : "closed")} queued; visible movement may wait for a presentation refresh";
     }
@@ -169,16 +187,16 @@ internal static class NativeCarControl
             throw new InvalidOperationException("free-roam panel presentation is not active");
 
         byte[] expected = [0x48, 0x89, 0x5C, 0x24, 0x10, 0x56, 0x57, 0x41, 0x56, 0x48];
-        if (!Read(context.Handle, context.Module + BooleanTriggerSetterRva, expected.Length).SequenceEqual(expected))
+        if (!Read(context.Handle, context.Module + context.Profile.BooleanTriggerSetterRva, expected.Length).SequenceEqual(expected))
             throw new InvalidOperationException("Native panel-trigger signature mismatch.");
         DispatchBooleanTrigger(context.Handle, target.Component,
-            context.Module + BooleanTriggerSetterRva, Fnv1a(eventName), true);
+            context.Module + context.Profile.BooleanTriggerSetterRva, Fnv1a(eventName), true);
         // CinematicCar event delivery asserts the converted key for one update
         // and then rolls it back. Leaving both *_open and *_close latched true
         // makes the animation graph fight itself, so reproduce that pulse.
         Thread.Sleep(50);
         DispatchBooleanTrigger(context.Handle, target.Component,
-            context.Module + BooleanTriggerSetterRva, Fnv1a(eventName), false);
+            context.Module + context.Profile.BooleanTriggerSetterRva, Fnv1a(eventName), false);
         return $"{eventName} pulsed externally on vehicle 0x{target.Vehicle:X}";
     }
 
@@ -204,20 +222,20 @@ internal static class NativeCarControl
 
     internal static int GetRenderMode()
     {
-        var (handle, module) = OpenGameModule(action: false);
+        var (handle, module, profile) = OpenGameModule(action: false);
         using (handle)
         {
-            var controller = ResolveRenderController(handle, module);
+            var controller = ResolveRenderController(handle, module, profile);
             return ReadInt32(handle, controller + 0x2B0);
         }
     }
 
     internal static string SetRenderMode(int mode)
     {
-        var (handle, module) = OpenGameModule(action: true);
+        var (handle, module, profile) = OpenGameModule(action: true);
         using (handle)
         {
-            var controller = ResolveRenderController(handle, module);
+            var controller = ResolveRenderController(handle, module, profile);
             var current = ReadInt32(handle, controller + 0x2B0);
             if (current == mode) return $"render mode already {mode}";
             Write(handle, controller + 0x2BC, BitConverter.GetBytes(0));
@@ -233,25 +251,37 @@ internal static class NativeCarControl
 
     // Opens the verified game process for module-relative work (render mode),
     // without the convertible-car locator, so it works on any car.
-    private static (SafeProcessHandle Handle, ulong Module) OpenGameModule(bool action)
+    private static (SafeProcessHandle Handle, ulong Module, GameBuildProfile Profile) OpenGameModule(bool action)
     {
         var game = TryGetGame() ?? throw new InvalidOperationException("game not running");
         try
         {
+            if (!game.Responding) throw new InvalidOperationException("game is not responding");
             var moduleInfo = game.MainModule ?? throw new InvalidOperationException("game module unavailable");
-            using (var file = File.OpenRead(moduleInfo.FileName))
-                if (!Convert.ToHexString(SHA256.HashData(file)).Equals(SupportedSha256, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("unsupported game build");
             var handle = OpenProcess(action ? ActionAccess : ReadAccess, false, game.Id);
             if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error(), "OpenProcess");
-            return (handle, (ulong)moduleInfo.BaseAddress);
+            try
+            {
+                var module = (ulong)moduleInfo.BaseAddress;
+                var identity = ReadModuleIdentity(handle, module);
+                var profile = GameBuildProfiles.MatchExecutable(moduleInfo.FileName,
+                    identity.PeTimestamp, identity.SizeOfImage);
+                return (handle, module, profile);
+            }
+            catch
+            {
+                handle.Dispose();
+                throw;
+            }
         }
         finally { game.Dispose(); }
     }
 
-    private static ulong ResolveRenderController(SafeProcessHandle handle, ulong module)
+    private static ulong ResolveRenderController(SafeProcessHandle handle, ulong module, GameBuildProfile profile)
     {
-        var global = ReadUInt64(handle, module + RenderSystemGlobalRva);
+        if (profile.RenderSystemGlobalRva is not { } renderSystemGlobalRva)
+            throw new InvalidOperationException("max-detail mode is not available for this game build yet");
+        var global = ReadUInt64(handle, module + renderSystemGlobalRva);
         var renderSystem = ReadUInt64(handle, global + 0x1D8);
         var wantedType = ReadUInt32(handle, renderSystem + 0x18);
         var sentinel = ReadUInt64(handle, renderSystem + 0x08);
@@ -286,72 +316,98 @@ internal static class NativeCarControl
         var game = TryGetGame() ?? throw new InvalidOperationException("game not running");
         try
         {
+            if (!game.Responding) throw new InvalidOperationException("game is not responding");
             var moduleInfo = game.MainModule ?? throw new InvalidOperationException("game module unavailable");
-            using (var file = File.OpenRead(moduleInfo.FileName))
-            {
-                var digest = Convert.ToHexString(SHA256.HashData(file));
-                if (!digest.Equals(SupportedSha256, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("unsupported game build");
-            }
-
             var handle = OpenProcess(action ? ActionAccess : ReadAccess, false, game.Id);
             if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error(), "OpenProcess");
             try
             {
                 var module = (ulong)moduleInfo.BaseAddress;
-                var root = ReadUInt64(handle, module + RootRegistryRva);
-                var table = ReadUInt64(handle, root + 8);
-                var slotIndex = ReadInt32(handle, module + SlotIndexRva);
-                if (root < 0x10000 || table < 0x10000 || slotIndex is < 0 or > 1024)
+                var identity = ReadModuleIdentity(handle, module);
+                var profile = GameBuildProfiles.MatchExecutable(moduleInfo.FileName,
+                    identity.PeTimestamp, identity.SizeOfImage);
+                if (profile.RootRegistryRva is null)
+                    return LocateDynamic(game.Id, handle, module, identity.SizeOfImage, profile);
+                var root = ReadUInt64(handle, module + profile.RootRegistryRva!.Value);
+                var table = root >= 0x10000 ? ReadUInt64(handle, root + 8) : 0;
+                if (root < 0x10000 || table < 0x10000)
                     throw new InvalidOperationException("native service root unavailable");
                 var slots = ReadUInt64(handle, table + 0xE8);
-                var owner = ReadUInt64(handle, slots + (ulong)slotIndex * 0x10);
-                if (slots < 0x10000 || owner < 0x10000)
+                if (slots < 0x10000)
                     throw new InvalidOperationException("native input service unavailable");
 
-                var begin = ReadUInt64(handle, owner + 0xD8);
-                var end = ReadUInt64(handle, owner + 0xE0);
-                var capacity = ReadUInt64(handle, owner + 0xE8);
-                if (begin < 0x10000 || end < begin || capacity < end || ((end - begin) & 7) != 0 || end - begin > 0x8000)
-                    throw new InvalidOperationException("native command list unavailable");
-
-                var count = checked((int)((end - begin) / 8));
-                for (var i = 0; i < count; i++)
+                // Steam currently exposes the active slot as a global.  The
+                // Microsoft Store build keeps the value in runtime-owned
+                // state, so scan the bounded 0x400-entry table and select the
+                // entry whose subscription chain matches the verified wrapper.
+                IEnumerable<int> slotIndices;
+                if (profile.SlotIndexRva is { } slotIndexRva)
                 {
-                    var subscription = ReadUInt64(handle, begin + (ulong)i * 8);
-                    if (subscription < 0x10000) continue;
-                    byte[] data;
-                    try { data = Read(handle, subscription, 0xB0); }
-                    catch { continue; }
-                    if (BitConverter.ToUInt64(data, 0) != module + SubscriptionVtableRva ||
-                        BitConverter.ToInt32(data, 0xA0) != ConvertibleCommand) continue;
+                    var slotIndex = ReadInt32(handle, module + slotIndexRva);
+                    if (slotIndex is < 0 or > 1024)
+                        throw new InvalidOperationException("native service slot unavailable");
+                    slotIndices = [slotIndex];
+                }
+                else
+                {
+                    slotIndices = Enumerable.Range(0, 0x400);
+                }
 
-                    var mappingCount = BitConverter.ToInt32(data, 0x44) & 0x3FF;
-                    var mappingTable = BitConverter.ToUInt64(data, 0x38);
-                    if (mappingCount is <= 0 or > 64 || mappingTable < 0x10000) continue;
-                    var mappings = Read(handle, mappingTable, checked(mappingCount * 0x10));
-                    for (var mappingIndex = 0; mappingIndex < mappingCount; mappingIndex++)
+                foreach (var slotIndex in slotIndices)
+                {
+                    var owner = ReadUInt64(handle, slots + (ulong)slotIndex * 0x10);
+                    if (owner < 0x10000) continue;
+                    var begin = ReadUInt64(handle, owner + 0xD8);
+                    var end = ReadUInt64(handle, owner + 0xE0);
+                    var capacity = ReadUInt64(handle, owner + 0xE8);
+                    if (begin < 0x10000 || end < begin || capacity < end ||
+                        ((end - begin) & 7) != 0 || end - begin > 0x8000) continue;
+
+                    var count = checked((int)((end - begin) / 8));
+                    for (var i = 0; i < count; i++)
                     {
-                        var candidate = BitConverter.ToUInt64(mappings, mappingIndex * 0x10 + 8);
-                        if (candidate < 0x10000) continue;
-                        try
+                        var subscription = ReadUInt64(handle, begin + (ulong)i * 8);
+                        if (subscription < 0x10000) continue;
+                        byte[] data;
+                        try { data = Read(handle, subscription, 0xB0); }
+                        catch { continue; }
+                        if (BitConverter.ToUInt64(data, 0) != module + profile.SubscriptionVtableRva ||
+                            BitConverter.ToInt32(data, 0xA0) != ConvertibleCommand) continue;
+
+                        var mappingCount = BitConverter.ToInt32(data, 0x44) & 0x3FF;
+                        var mappingTable = BitConverter.ToUInt64(data, 0x38);
+                        if (mappingCount is <= 0 or > 64 || mappingTable < 0x10000) continue;
+                        var mappings = Read(handle, mappingTable, checked(mappingCount * 0x10));
+                        for (var mappingIndex = 0; mappingIndex < mappingCount; mappingIndex++)
                         {
-                            var wrapper = Read(handle, candidate, 0x68);
-                            if (BitConverter.ToUInt64(wrapper, 0) != module + CallbackVtableRva ||
-                                BitConverter.ToUInt64(wrapper, 0x20) != module + CallbackInterfaceVtableRva ||
-                                BitConverter.ToUInt64(wrapper, 0x28) != module + LambdaVtableRva ||
-                                BitConverter.ToUInt64(wrapper, 0x30) != module + HandlerRva ||
-                                BitConverter.ToUInt64(wrapper, 0x60) != candidate + 0x28) continue;
-                            var callbackOwner = BitConverter.ToUInt64(wrapper, 0x40);
-                            var ownerBytes = Read(handle, callbackOwner, 0x50);
-                            var ownerLink = BitConverter.ToUInt64(data, 0xA8);
-                            if (ownerLink < 0x10000 || BitConverter.ToUInt64(ownerBytes, 0) != module + OwnerVtableRva ||
-                                BitConverter.ToUInt64(ownerBytes, 0x38) != ReadUInt64(handle, ownerLink) ||
-                                BitConverter.ToUInt64(ownerBytes, 0x40) < 0x10000) continue;
-                            var carController = BitConverter.ToUInt64(ownerBytes, 0x40);
-                            return new NativeContext(game.Id, module, callbackOwner, carController, handle);
+                            var candidate = BitConverter.ToUInt64(mappings, mappingIndex * 0x10 + 8);
+                            if (candidate < 0x10000) continue;
+                            try
+                            {
+                                var wrapper = Read(handle, candidate, 0x68);
+                                if (BitConverter.ToUInt64(wrapper, 0) != module + profile.CallbackVtableRva ||
+                                    BitConverter.ToUInt64(wrapper, 0x20) != module + profile.CallbackInterfaceVtableRva ||
+                                    BitConverter.ToUInt64(wrapper, 0x28) != module + profile.LambdaVtableRva ||
+                                    BitConverter.ToUInt64(wrapper, 0x30) != module + profile.HandlerRva ||
+                                    BitConverter.ToUInt64(wrapper, 0x60) != candidate + 0x28) continue;
+                                var callbackOwner = BitConverter.ToUInt64(wrapper, 0x40);
+                                var ownerBytes = Read(handle, callbackOwner, 0x50);
+                                var ownerLink = BitConverter.ToUInt64(data, 0xA8);
+                                var ownerIdentity = BitConverter.ToUInt64(ownerBytes, 0);
+                                // The package build changed the subscription's
+                                // owner-link layout.  Its wrapper/car identity
+                                // is still verified, but do not dereference the
+                                // legacy link field when live-slot discovery is
+                                // active (it is not a pointer in that build).
+                                if (ownerIdentity != module + profile.OwnerVtableRva ||
+                                    (profile.SlotIndexRva is not null &&
+                                     (ownerLink < 0x10000 || BitConverter.ToUInt64(ownerBytes, 0x38) != ReadUInt64(handle, ownerLink))) ||
+                                    BitConverter.ToUInt64(ownerBytes, 0x40) < 0x10000) continue;
+                                var carController = BitConverter.ToUInt64(ownerBytes, 0x40);
+                                return new NativeContext(game.Id, module, callbackOwner, carController, profile, handle);
+                            }
+                            catch { }
                         }
-                        catch { }
                     }
                 }
                 throw new InvalidOperationException("supported convertible not active");
@@ -368,7 +424,118 @@ internal static class NativeCarControl
         }
     }
 
-    private static Process? TryGetGame() => Process.GetProcessesByName("forzahorizon6").OrderByDescending(p => p.StartTime).FirstOrDefault();
+    private static Process? TryGetGame() => GameProcessNames
+        .SelectMany(Process.GetProcessesByName)
+        .OrderByDescending(p => p.StartTime)
+        .FirstOrDefault();
+
+    private static NativeContext LocateDynamic(int processId, SafeProcessHandle handle,
+        ulong module, uint sizeOfImage, GameBuildProfile profile)
+    {
+        var header = Read(handle, module, 0x1000);
+        var peOffset = BitConverter.ToInt32(header, 0x3C);
+        var sectionCount = BitConverter.ToUInt16(header, peOffset + 6);
+        var optionalSize = BitConverter.ToUInt16(header, peOffset + 20);
+        var sectionOffset = peOffset + 24 + optionalSize;
+        uint dataRva = 0, dataSize = 0;
+        for (var index = 0; index < sectionCount; index++)
+        {
+            var offset = sectionOffset + index * 40;
+            var name = System.Text.Encoding.ASCII.GetString(header, offset, 8).TrimEnd('\0');
+            if (!name.Equals(".data", StringComparison.Ordinal)) continue;
+            dataSize = BitConverter.ToUInt32(header, offset + 8);
+            dataRva = BitConverter.ToUInt32(header, offset + 12);
+            break;
+        }
+        if (dataRva == 0 || dataSize == 0)
+            throw new InvalidOperationException("native service data section unavailable");
+
+        var data = Read(handle, module + dataRva, checked((int)dataSize));
+        var pages = new Dictionary<ulong, byte[]>();
+        var moduleEnd = module + sizeOfImage;
+        bool TryReadU64(ulong address, out ulong value)
+        {
+            value = 0;
+            var page = address & ~0xFFFUL;
+            var pageOffset = checked((int)(address - page));
+            if (pageOffset > 0xFF8) return false;
+            if (!pages.TryGetValue(page, out var pageBytes))
+            {
+                if (pages.Count >= 32768) return false;
+                try { pageBytes = Read(handle, page, 0x1000); }
+                catch { return false; }
+                pages[page] = pageBytes;
+            }
+            value = BitConverter.ToUInt64(pageBytes, pageOffset);
+            return true;
+        }
+        static bool HeapPointer(ulong value) => value is >= 0x10000 and < 0x0000800000000000 && (value & 7) == 0;
+        bool InModule(ulong value) => value >= module && value < moduleEnd;
+
+        IEnumerable<int> rootOffsets = Enumerable.Range(0, (data.Length - 8) / 8 + 1)
+            .Select(index => index * 8);
+        if (profile.RootRegistryHintRva is { } hintRva && hintRva >= dataRva &&
+            hintRva <= dataRva + (uint)data.Length - 8 && ((hintRva - dataRva) & 7) == 0)
+        {
+            var hintOffset = checked((int)(hintRva - dataRva));
+            rootOffsets = new[] { hintOffset }.Concat(rootOffsets.Where(offset => offset != hintOffset));
+        }
+
+        foreach (var offset in rootOffsets)
+        {
+            var root = BitConverter.ToUInt64(data, offset);
+            if (!HeapPointer(root) || !TryReadU64(root + 8, out var table) || !HeapPointer(table) ||
+                !TryReadU64(table + 0xE8, out var slots) || !HeapPointer(slots)) continue;
+
+            for (var slotIndex = 0; slotIndex < 0x400; slotIndex++)
+            {
+                if (!TryReadU64(slots + (ulong)slotIndex * 0x10, out var owner) || !HeapPointer(owner)) continue;
+                if (!TryReadU64(owner + 0xD8, out var begin) || !TryReadU64(owner + 0xE0, out var end) ||
+                    !TryReadU64(owner + 0xE8, out var capacity) || !HeapPointer(begin) || end < begin ||
+                    capacity < end || ((end - begin) & 7) != 0 || end - begin is 0 or > 0x8000) continue;
+
+                var count = checked((int)((end - begin) / 8));
+                for (var item = 0; item < count; item++)
+                {
+                    if (!TryReadU64(begin + (ulong)item * 8, out var subscription) || !HeapPointer(subscription)) continue;
+                    byte[] subscriptionData;
+                    try { subscriptionData = Read(handle, subscription, 0xB0); }
+                    catch { continue; }
+                    if (BitConverter.ToUInt64(subscriptionData, 0) != module + profile.SubscriptionVtableRva ||
+                        BitConverter.ToInt32(subscriptionData, 0xA0) != ConvertibleCommand) continue;
+                    var mappingCount = BitConverter.ToInt32(subscriptionData, 0x44) & 0x3FF;
+                    var mappingTable = BitConverter.ToUInt64(subscriptionData, 0x38);
+                    if (mappingCount is <= 0 or > 64 || !HeapPointer(mappingTable)) continue;
+                    byte[] mappings;
+                    try { mappings = Read(handle, mappingTable, checked(mappingCount * 0x10)); }
+                    catch { continue; }
+                    for (var mappingIndex = 0; mappingIndex < mappingCount; mappingIndex++)
+                    {
+                        var candidate = BitConverter.ToUInt64(mappings, mappingIndex * 0x10 + 8);
+                        if (!HeapPointer(candidate)) continue;
+                        byte[] wrapper;
+                        try { wrapper = Read(handle, candidate, 0x68); }
+                        catch { continue; }
+                        if (!InModule(BitConverter.ToUInt64(wrapper, 0)) ||
+                            !InModule(BitConverter.ToUInt64(wrapper, 0x20)) ||
+                            !InModule(BitConverter.ToUInt64(wrapper, 0x28)) ||
+                            BitConverter.ToUInt64(wrapper, 0x30) != module + profile.HandlerRva ||
+                            BitConverter.ToUInt64(wrapper, 0x60) != candidate + 0x28) continue;
+                        var callbackOwner = BitConverter.ToUInt64(wrapper, 0x40);
+                        if (!HeapPointer(callbackOwner)) continue;
+                        byte[] ownerBytes;
+                        try { ownerBytes = Read(handle, callbackOwner, 0x50); }
+                        catch { continue; }
+                        if (BitConverter.ToUInt64(ownerBytes, 0) != module + profile.OwnerVtableRva) continue;
+                        var carController = BitConverter.ToUInt64(ownerBytes, 0x40);
+                        if (!HeapPointer(carController)) continue;
+                        return new NativeContext(processId, module, callbackOwner, carController, profile, handle);
+                    }
+                }
+            }
+        }
+        throw new InvalidOperationException("supported convertible not active");
+    }
 
     private static byte[] BuildCall(ulong owner, ulong handler)
     {
@@ -389,6 +556,25 @@ internal static class NativeCarControl
             hash = unchecked(hash * 0x01000193u);
         }
         return hash;
+    }
+
+    private sealed record ModuleIdentity(uint PeTimestamp, uint SizeOfImage);
+
+    // WindowsApps packages commonly deny direct file reads even when the game
+    // process itself is readable.  Read the two stable PE identity fields from
+    // the mapped image so metadata-matched profiles work for both packages.
+    private static ModuleIdentity ReadModuleIdentity(SafeProcessHandle process, ulong module)
+    {
+        var header = Read(process, module, 0x1000);
+        var peOffset = BitConverter.ToInt32(header, 0x3C);
+        if (peOffset < 0x40 || peOffset + 0x60 > header.Length ||
+            header[peOffset] != (byte)'P' || header[peOffset + 1] != (byte)'E' ||
+            header[peOffset + 2] != 0 || header[peOffset + 3] != 0)
+            throw new InvalidOperationException("game PE header unavailable");
+        var timestamp = BitConverter.ToUInt32(header, peOffset + 8);
+        var sizeOfImage = BitConverter.ToUInt32(header, peOffset + 24 + 56);
+        if (sizeOfImage == 0) throw new InvalidOperationException("game PE image size unavailable");
+        return new(timestamp, sizeOfImage);
     }
 
     private static void DispatchBooleanTrigger(SafeProcessHandle process, ulong component, ulong setter, uint hash, bool value)
@@ -436,7 +622,8 @@ internal static class NativeCarControl
             throw new Win32Exception(Marshal.GetLastWin32Error(), $"WriteProcessMemory 0x{address:X}");
     }
 
-    private sealed record NativeContext(int ProcessId, ulong Module, ulong CallbackOwner, ulong CarController, SafeProcessHandle Handle) : IDisposable
+    private sealed record NativeContext(int ProcessId, ulong Module, ulong CallbackOwner, ulong CarController,
+        GameBuildProfile Profile, SafeProcessHandle Handle) : IDisposable
     {
         public void Dispose() => Handle.Dispose();
     }
