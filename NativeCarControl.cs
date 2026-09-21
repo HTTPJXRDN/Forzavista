@@ -46,9 +46,9 @@ internal static class NativeCarControl
     // Homespace(8) is confirmed to force full car detail but swaps more scene.
     // Change MaxDetailRenderMode to retarget the toggle without other edits.
     internal const int FreeroamRenderMode = 9;
-    // Homespace(8) is the mode confirmed (HANDOFF §109) to snap the car to full
-    // Autovista/max detail. ThreeTwoOne(3) is a transient pre-race countdown
-    // scenario and does not persist. Change here to retarget the toggle.
+    // Homespace(8) snaps the car to full Autovista/max detail.
+    // ThreeTwoOne(3) is a transient pre-race countdown scenario and does not
+    // persist. Change here to retarget the toggle.
     internal const int MaxDetailRenderMode = 8;
     private static readonly IReadOnlyDictionary<string, (string Trigger, bool Value)> ActionTriggers =
         new Dictionary<string, (string Trigger, bool Value)>(StringComparer.OrdinalIgnoreCase)
@@ -74,9 +74,8 @@ internal static class NativeCarControl
             ["openaero"] = "wing_open", ["closeaero"] = "wing_close",
             ["openvents"] = "vent_open", ["closevents"] = "vent_close"
         };
-    // This legacy managed path remains garage-scoped. The V8 internal proof now
-    // provides a separate, visually verified free-roam path; wire that session
-    // controller into the form before enabling these buttons in free roam.
+    // Managed presentation triggers are garage-scoped. Free Roam uses the
+    // session vehicle's animation component through the separate action list.
     internal static IReadOnlyCollection<string> SupportedPanelActions { get; } = ActionTriggers.Keys.ToArray();
     internal static IReadOnlyCollection<string> SupportedFreeRoamPanelActions { get; } =
     [
@@ -85,7 +84,9 @@ internal static class NativeCarControl
         "opendoorLR", "closedoorLR",
         "opendoorRR", "closedoorRR",
         "openhood", "closehood",
-        "opentrunk", "closetrunk"
+        "opentrunk", "closetrunk",
+        "openaero", "closeaero",
+        "openheadlights", "closeheadlights"
     ];
     internal static NativeControlStatus GetStatus()
     {
@@ -199,6 +200,63 @@ internal static class NativeCarControl
         DispatchBooleanTrigger(context.Handle, target.Component,
             context.Module + context.Profile.BooleanTriggerSetterRva, Fnv1a(eventName), false);
         return $"{eventName} pulsed externally on vehicle 0x{target.Vehicle:X}";
+    }
+
+    internal static string TriggerPopupHeadlights(bool open)
+    {
+        using var context = Locate(action: true);
+        var target = ValidateAnimationTarget(context);
+        var flagAddress = target.Vehicle + 0x82A3;
+        var flag = Read(context.Handle, flagAddress, 1)[0];
+        if (flag > 1)
+            throw new InvalidOperationException("vehicle Autovista flag is invalid");
+        if (flag == 0)
+            Write(context.Handle, flagAddress, [1]);
+
+        byte[] expected = [0x48, 0x89, 0x5C, 0x24, 0x10, 0x56, 0x57, 0x41, 0x56, 0x48];
+        var setter = context.Module + context.Profile.BooleanTriggerSetterRva;
+        if (!Read(context.Handle, setter, expected.Length).SequenceEqual(expected))
+            throw new InvalidOperationException("Native headlight-trigger signature mismatch.");
+
+        var suffix = open ? "open" : "close";
+        foreach (var side in new[] { "L", "R" })
+        {
+            var eventName = $"headlight{side}_{suffix}";
+            DispatchBooleanTrigger(context.Handle, target.Component, setter, Fnv1a(eventName), true);
+            Thread.Sleep(50);
+            DispatchBooleanTrigger(context.Handle, target.Component, setter, Fnv1a(eventName), false);
+            Thread.Sleep(25);
+        }
+        return $"popup headlights {(open ? "opened" : "closed")} on vehicle 0x{target.Vehicle:X}";
+    }
+
+    internal static string TriggerFreeRoamExplode(bool open)
+    {
+        string[] eventNames = open
+            ? ["doorLF_open", "doorRF_open", "doorLR_open", "doorRR_open", "hood_open", "trunk_open",
+               "wing_open", "headlightL_open", "headlightR_open"]
+            : ["doorLF_close", "doorRF_close", "doorLR_close", "doorRR_close", "hood_close", "trunk_close",
+               "wing_close", "headlightL_close", "headlightR_close"];
+
+        using var context = Locate(action: true);
+        var target = ValidateAnimationTarget(context);
+        var flagAddress = target.Vehicle + 0x82A3;
+        var flag = Read(context.Handle, flagAddress, 1)[0];
+        if (flag > 1)
+            throw new InvalidOperationException("vehicle Autovista flag is invalid");
+        if (flag == 0)
+            Write(context.Handle, flagAddress, [1]);
+
+        byte[] expected = [0x48, 0x89, 0x5C, 0x24, 0x10, 0x56, 0x57, 0x41, 0x56, 0x48];
+        var setter = context.Module + context.Profile.BooleanTriggerSetterRva;
+        if (!Read(context.Handle, setter, expected.Length).SequenceEqual(expected))
+            throw new InvalidOperationException("Native panel-trigger signature mismatch.");
+
+        var hashes = eventNames.Select(Fnv1a).ToArray();
+        DispatchBooleanTriggers(context.Handle, target.Component, setter, hashes, true);
+        Thread.Sleep(50);
+        DispatchBooleanTriggers(context.Handle, target.Component, setter, hashes, false);
+        return $"{(open ? "exploded" : "imploded")} panels, active aero, and pop-up headlights on vehicle 0x{target.Vehicle:X}";
     }
 
     internal static string RestoreFreeRoamPresentationFlag()
@@ -699,21 +757,37 @@ internal static class NativeCarControl
         return new(timestamp, sizeOfImage);
     }
 
-    private static void DispatchBooleanTrigger(SafeProcessHandle process, ulong component, ulong setter, uint hash, bool value)
+    private static void DispatchBooleanTrigger(SafeProcessHandle process, ulong component, ulong setter, uint hash, bool value) =>
+        DispatchBooleanTriggers(process, component, setter, [hash], value);
+
+    private static void DispatchBooleanTriggers(SafeProcessHandle process, ulong component, ulong setter,
+        IReadOnlyList<uint> hashes, bool value)
     {
+        if (hashes.Count == 0) return;
         var remote = (ulong)VirtualAllocEx(process, 0, 0x1000, MemCommitReserve, PageExecuteReadWrite);
         if (remote == 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "VirtualAllocEx");
         try
         {
+            const ulong hashDataOffset = 0x800;
             var code = new List<byte>();
             code.AddRange([0x48, 0x83, 0xEC, 0x28]);
-            code.AddRange([0x48, 0xB9]); code.AddRange(BitConverter.GetBytes(component));
-            code.AddRange([0x48, 0xBA]); code.AddRange(BitConverter.GetBytes(remote + 0x100));
-            code.AddRange([0x41, 0xB8]); code.AddRange(BitConverter.GetBytes(value ? 1u : 0u));
-            code.AddRange([0x48, 0xB8]); code.AddRange(BitConverter.GetBytes(setter));
-            code.AddRange([0xFF, 0xD0, 0xB8, 0x01, 0x00, 0x00, 0x00, 0x48, 0x83, 0xC4, 0x28, 0xC3]);
+            for (var index = 0; index < hashes.Count; index++)
+            {
+                code.AddRange([0x48, 0xB9]); code.AddRange(BitConverter.GetBytes(component));
+                code.AddRange([0x48, 0xBA]);
+                code.AddRange(BitConverter.GetBytes(remote + hashDataOffset + (ulong)index * 4));
+                code.AddRange([0x41, 0xB8]); code.AddRange(BitConverter.GetBytes(value ? 1u : 0u));
+                code.AddRange([0x48, 0xB8]); code.AddRange(BitConverter.GetBytes(setter));
+                code.AddRange([0xFF, 0xD0]);
+            }
+            code.AddRange([0xB8, 0x01, 0x00, 0x00, 0x00, 0x48, 0x83, 0xC4, 0x28, 0xC3]);
+            if (code.Count >= (int)hashDataOffset || hashes.Count * sizeof(uint) > 0x800)
+                throw new InvalidOperationException("Native panel-trigger batch is too large.");
             Write(process, remote, code.ToArray());
-            Write(process, remote + 0x100, BitConverter.GetBytes(hash));
+            var hashData = new byte[hashes.Count * sizeof(uint)];
+            for (var index = 0; index < hashes.Count; index++)
+                BitConverter.GetBytes(hashes[index]).CopyTo(hashData, index * sizeof(uint));
+            Write(process, remote + hashDataOffset, hashData);
             FlushInstructionCache(process, (nuint)remote, (nuint)code.Count);
             using var thread = CreateRemoteThread(process, 0, 0, (nuint)remote, 0, 0, out _);
             if (thread.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateRemoteThread");

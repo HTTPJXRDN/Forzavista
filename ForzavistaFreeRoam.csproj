@@ -5,11 +5,12 @@
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>1.1.1</Version>
-    <Product>Forzavista Free Roam</Product>
-    <Authors>Forzavista Free Roam contributors</Authors>
-    <Description>External Free Roam car-panel control menu.</Description>
-    <Copyright>Copyright (c) 2026 Forzavista Free Roam contributors</Copyright>
+    <Version>1.2.0</Version>
+    <AssemblyName>Forzavista</AssemblyName>
+    <Product>Forzavista Anywhere</Product>
+    <Authors>JXRDN</Authors>
+    <Description>External Forzavista vehicle-control menu for Free Roam.</Description>
+    <Copyright>Copyright (c) 2026 JXRDN</Copyright>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>assets\Icon\Forzavista.ico</ApplicationIcon>
   </PropertyGroup>

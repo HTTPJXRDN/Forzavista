@@ -1,6 +1,24 @@
-# Changelog
+# Changelog 
 
-All notable changes to Forzavista Free Roam are documented here.
+## 1.2.0 - 2026-09-21
+
+### Added
+
+- Open and close controls for pop-up headlights on supported cars.
+- Explode and Implode now include active aero and pop-up headlights, with all
+  supported animation events dispatched together instead of being staggered.
+
+### Fixed
+
+- Active-aero open and close actions now use the vehicle's dedicated wing
+  animation events in Free Roam.
+- Microsoft Store/Xbox actions no longer wait behind synchronous presentation
+  cleanup or an unnecessary immediate status lookup after every toggle.
+
+### Known issue
+
+- Closing pop-up headlights at night is temporary because the game's automatic
+  lighting controller can request that they reopen.
 
 ## 1.1.1 - 2026-09-07
 

@@ -27,17 +27,12 @@ public partial class MainWindow : Window
         new("Roof", "openroof", "closeroof"),
         new("Storage", "openstorage", "closestorage"),
         new("Active aero", "openaero", "closeaero"),
+        new("Pop-up headlights", "openheadlights", "closeheadlights"),
         new("Vents", "openvents", "closevents"),
     ];
-    private static readonly (string Panel, string Action)[] ExplodeActions =
+    private static readonly string[] ExplodePanels =
     [
-        ("doorLF", "opendoorLF"), ("doorRF", "opendoorRF"), ("doorLR", "opendoorLR"),
-        ("doorRR", "opendoorRR"), ("hood", "openhood"), ("trunk", "opentrunk")
-    ];
-    private static readonly (string Panel, string Action)[] ImplodeActions =
-    [
-        ("doorLF", "closedoorLF"), ("doorRF", "closedoorRF"), ("doorLR", "closedoorLR"),
-        ("doorRR", "closedoorRR"), ("hood", "closehood"), ("trunk", "closetrunk")
+        "doorLF", "doorRF", "doorLR", "doorRR", "hood", "trunk", "aero", "headlights"
     ];
 
     private readonly Dictionary<string, Button> _buttonsByAction = new(StringComparer.OrdinalIgnoreCase);
@@ -49,6 +44,7 @@ public partial class MainWindow : Window
     private int? _sessionProcessId;
     private ulong? _sessionVehicle;
     private bool _ownsPresentationFlag;
+    private int _presentationRestoreGeneration;
     private bool _maxDetailOn;
     private bool _polling;
     private string? _hashedPath;
@@ -277,8 +273,37 @@ public partial class MainWindow : Window
         "implode" => ImplodeAsync(),
         "resetstate" => ResetAsync(),
         "maxdetail" => MaxDetailAsync(),
+        "openheadlights" => PopupHeadlightsAsync(true),
+        "closeheadlights" => PopupHeadlightsAsync(false),
         _ => SendActionAsync(action)
     };
+
+    private async Task PopupHeadlightsAsync(bool open)
+    {
+        await _actionGate.WaitAsync();
+        try
+        {
+            CancelScheduledPresentationRestore();
+            var message = await Task.Run(() => NativeCarControl.TriggerPopupHeadlights(open));
+            if (open)
+            {
+                _openPanels.Add("headlights");
+                _ownsPresentationFlag = true;
+            }
+            else
+            {
+                _openPanels.Remove("headlights");
+                if (_openPanels.Count == 0)
+                {
+                    SchedulePresentationRestore();
+                    message = $"{message}; presentation reset scheduled";
+                }
+            }
+            SetControlsStatus(message, Good);
+        }
+        catch (Exception ex) { SetControlsStatus(ex.Message, Warn); }
+        finally { _actionGate.Release(); }
+    }
 
     private async Task SendActionAsync(string action)
     {
@@ -288,6 +313,7 @@ public partial class MainWindow : Window
             string message;
             if (NativeCarControl.SupportedFreeRoamPanelActions.Contains(action, StringComparer.OrdinalIgnoreCase))
             {
+                CancelScheduledPresentationRestore();
                 message = await Task.Run(() => NativeCarControl.TriggerFreeRoamPanel(action));
                 var opening = action.StartsWith("open", StringComparison.OrdinalIgnoreCase);
                 var panel = opening ? action[4..] : action[5..];
@@ -297,10 +323,8 @@ public partial class MainWindow : Window
                     _openPanels.Remove(panel);
                     if (_openPanels.Count == 0)
                     {
-                        await Task.Delay(3000);
-                        var restored = await Task.Run(NativeCarControl.RestoreFreeRoamPresentationFlag);
-                        _ownsPresentationFlag = false;
-                        message = $"{message}; {restored}";
+                        SchedulePresentationRestore();
+                        message = $"{message}; presentation reset scheduled";
                     }
                 }
             }
@@ -315,7 +339,7 @@ public partial class MainWindow : Window
             SetControlsStatus(message, Good);
         }
         catch (Exception ex) { SetControlsStatus(ex.Message, Warn); }
-        finally { _actionGate.Release(); await PollStatusAsync(); }
+        finally { _actionGate.Release(); }
     }
 
     private async Task ExplodeAsync()
@@ -323,20 +347,14 @@ public partial class MainWindow : Window
         await _actionGate.WaitAsync();
         try
         {
-            var opened = new List<string>();
-            foreach (var (panel, openAction) in ExplodeActions)
-            {
-                if (_openPanels.Contains(panel)) continue;
-                await Task.Run(() => NativeCarControl.TriggerFreeRoamPanel(openAction));
-                _openPanels.Add(panel);
-                _ownsPresentationFlag = true;
-                opened.Add(panel);
-                await Task.Delay(100);
-            }
-            SetControlsStatus(opened.Count == 0 ? "all tracked panels already open" : $"opened {string.Join(", ", opened)}", Good);
+            CancelScheduledPresentationRestore();
+            var message = await Task.Run(() => NativeCarControl.TriggerFreeRoamExplode(open: true));
+            foreach (var panel in ExplodePanels) _openPanels.Add(panel);
+            _ownsPresentationFlag = true;
+            SetControlsStatus(message, Good);
         }
         catch (Exception ex) { SetControlsStatus(ex.Message, Warn); }
-        finally { _actionGate.Release(); await PollStatusAsync(); }
+        finally { _actionGate.Release(); }
     }
 
     private async Task ImplodeAsync()
@@ -344,23 +362,22 @@ public partial class MainWindow : Window
         await _actionGate.WaitAsync();
         try
         {
+            CancelScheduledPresentationRestore();
             if (_openPanels.Count == 0) { SetControlsStatus("no open panels tracked", Good); return; }
-            var closed = new List<string>();
-            foreach (var (panel, closeAction) in ImplodeActions)
+            var message = await Task.Run(() => NativeCarControl.TriggerFreeRoamExplode(open: false));
+            foreach (var panel in ExplodePanels) _openPanels.Remove(panel);
+            if (_openPanels.Count == 0)
             {
-                if (!_openPanels.Contains(panel)) continue;
-                await Task.Run(() => NativeCarControl.TriggerFreeRoamPanel(closeAction));
-                _openPanels.Remove(panel);
-                closed.Add(panel);
-                await Task.Delay(100);
+                SchedulePresentationRestore();
+                SetControlsStatus($"{message}; presentation reset scheduled", Good);
             }
-            await Task.Delay(3000);
-            var restored = await Task.Run(NativeCarControl.RestoreFreeRoamPresentationFlag);
-            _ownsPresentationFlag = false;
-            SetControlsStatus($"closed {string.Join(", ", closed)}; {restored}", Good);
+            else
+            {
+                SetControlsStatus(message, Good);
+            }
         }
         catch (Exception ex) { SetControlsStatus(ex.Message, Warn); }
-        finally { _actionGate.Release(); await PollStatusAsync(); }
+        finally { _actionGate.Release(); }
     }
 
     private async Task ResetAsync()
@@ -368,6 +385,7 @@ public partial class MainWindow : Window
         await _actionGate.WaitAsync();
         try
         {
+            CancelScheduledPresentationRestore();
             var message = await Task.Run(NativeCarControl.RestoreFreeRoamPresentationFlag);
             _openPanels.Clear();
             _ownsPresentationFlag = false;
@@ -375,6 +393,36 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) { SetControlsStatus(ex.Message, Warn); }
         finally { _actionGate.Release(); await PollStatusAsync(); }
+    }
+
+    private void CancelScheduledPresentationRestore() => _presentationRestoreGeneration++;
+
+    private void SchedulePresentationRestore()
+    {
+        var generation = ++_presentationRestoreGeneration;
+        _ = RestorePresentationAfterDelayAsync(generation);
+    }
+
+    private async Task RestorePresentationAfterDelayAsync(int generation)
+    {
+        await Task.Delay(3000);
+        await _actionGate.WaitAsync();
+        try
+        {
+            if (generation != _presentationRestoreGeneration ||
+                !_ownsPresentationFlag || _openPanels.Count != 0)
+                return;
+
+            var restored = await Task.Run(NativeCarControl.RestoreFreeRoamPresentationFlag);
+            _ownsPresentationFlag = false;
+            SetControlsStatus(restored, Good);
+        }
+        catch (Exception ex)
+        {
+            if (generation == _presentationRestoreGeneration)
+                SetControlsStatus(ex.Message, Warn);
+        }
+        finally { _actionGate.Release(); }
     }
 
     private async Task MaxDetailAsync()
@@ -473,6 +521,7 @@ public partial class MainWindow : Window
 
     private void RestoreOnExit()
     {
+        CancelScheduledPresentationRestore();
         if (!_ownsPresentationFlag) return;
         try { NativeCarControl.RestoreFreeRoamPresentationFlag(); } catch { }
         _openPanels.Clear();
