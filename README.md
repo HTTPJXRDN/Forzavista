@@ -1,85 +1,114 @@
 # Forzavista Anywhere
 
-Version 1.2.0
+Version 1.3.0
+
+Forzavista Anywhere is an external Windows menu for using supported vehicle
+presentation controls in Forza Horizon 6 Free Roam.
 
 ## Features
 
-- Supports Steam and Microsoft Store/Xbox app versions.
-- Open and close individual supported panels.
-- Explode or implode supported doors, panels, active aero, and pop-up
-  headlights together without staggered delays.
-- Reset panel state.
-- Toggle the roof where the current car supports it.
-- Open and close supported active-aero surfaces.
-- Open and close pop-up headlights on supported cars.
-- Toggle full-detail car presentation.
-- Bind keyboard shortcuts to menu actions. They are active only while the game
-  is focused, so they do not interfere with other applications.
-- Bind Xbox controller buttons or button combinations to menu actions.
+- Supports the verified Steam and Microsoft Store/Xbox app builds listed below.
+- Open or close supported doors, hood, trunk, storage, vents, active aero, and
+  pop-up headlights. Each part has one toggle button.
+- Use one EXPLODE/IMPLODE button to operate supported panels, active aero, and
+  pop-up headlights together.
+- Hide or restore individual side windows on supported cars in Free Roam. The
+  tool affects both exterior and interior glass where those layers are found.
+- Toggle a supported roof, reset panel state, and enable Max Detail.
+- Bind a keyboard key or Xbox controller button combination to a toggle.
+  Reusing one binding for several parts operates them together. Shortcuts work
+  only while the game is focused.
+- Use the two-column menu to find panels and window/dynamic controls quickly.
 
-General lighting, indicator, and hazard controls are not included in this
-release.
+Side-window controls are available on Steam 6.440.853.0 and Microsoft
+Store/Xbox app 3.440.853.0. They are not available on Steam 6.430.771.0.
+Windows are a Free Roam feature; garage/Forzavista window hiding is not
+supported. General headlight, taillight, indicator, hazard, and arbitrary
+body-part/modelbin hiding controls are not included in this release.
 
 ## How to use
 
-- Start the game.
-- Enter Free Roam with a car loaded.
-- Start `Forzavista.exe`.
-- The status area confirms when the current session is ready.
-- Available panel controls depend on the selected car.
-- To create a binding, enable the keyboard or controller bind mode, click an
-  action, then press the desired key or controller combination.
-- If you enter Photo Mode, you may need to disable Max Detail and then enable
-  it again.
+1. Start the game and enter Free Roam with a car loaded.
+2. Start `Forzavista_v1.3.0.exe` from the release download. A locally built
+   executable is named `Forzavista.exe`.
+3. Wait for the status area to say the current session is ready.
+4. Click a supported part to alternate between OPEN and CLOSE. The available
+   controls depend on the car.
 
-## Known bugs
+To bind a control, turn on **SET BINDING**, click an action, then press a
+keyboard key or Xbox controller combination. You can give multiple actions
+the same binding to operate them together. Right-click an action while SET
+BINDING is on to clear its bindings; **CLEAR ALL BINDINGS** clears everything.
+EXPLODE/IMPLODE also uses a single binding. Existing EXPLODE bindings are
+carried over to it; an old IMPLODE binding is used if EXPLODE was unbound.
 
-- Sometimes animations do not play correctly. Click `RESET STATE` and try
-  again.
-- Max Detail affects world LOD slightly.
-- At night, the game's automatic lighting controller may reopen pop-up
-  headlights after the tool closes them.
+On cars without rear side windows, a shared four-window binding skips the
+missing positions, so it can still hide and restore the front pair. To turn
+window controls off for a session, set `FORZAVISTA_DISABLE_WINDOWS=1` before
+launching the menu.
 
 ## Supported game builds
 
-- Steam 6.430.771.0
+- Steam 6.430.771.0 (panels and other established controls; no windows)
 - Steam 6.440.853.0
 - Microsoft Store/Xbox app 3.440.853.0
 
 Unknown game builds are rejected until their compatibility has been verified.
 
+## Known issues
+
+- A crash occurred during one multi-car window test. Its cause remains
+  unconfirmed; later extended use and repeated car swaps were stable. If the
+  game becomes unstable, stop using window controls and report the car and
+  action that preceded it.
+- Garage/Forzavista window hiding is not supported.
+- Some cars lack individual panels or glass layers. If an animation does not
+  play correctly, click **RESET STATE** and try again.
+- Max Detail can lower world detail as well as changing the car. If Photo Mode
+  changes the car detail state, turn Max Detail off and on again.
+- At night, the game's automatic lighting may reopen pop-up headlights after
+  the menu closes them.
+
 ## Build from source
 
-Requirements:
-
-- Windows 10 or Windows 11 x64
-- .NET 10 SDK
+Requires Windows 10 or 11 x64 and the .NET 10 SDK. From the repository root:
 
 ```powershell
 dotnet publish .\ForzavistaFreeRoam.csproj --configuration Release -p:PublishProfile=FolderProfile
 ```
 
-The self-contained executable is written to `publish\Forzavista.exe`.
+The self-contained, single-file executable is written to
+`publish\Forzavista.exe`. The release download is supplied separately; do not
+upload a local `bin`, `obj`, or `publish` folder as source.
+
+Bindings normally use the user's AppData folder. To keep bindings on another
+drive, set `FORZAVISTA_BINDINGS_DIR` to an absolute folder before launching.
+For an opt-in JSONL session log, set `FORZAVISTA_SESSION_LOG_DIR` to an
+absolute folder with free space.
+
+## Screenshots
+
+These are the photos supplied for 1.3.0. They are stored in this repository,
+so GitHub displays them after the `assets/photos` folder is uploaded with the
+source files.
+
+![Mazda RX-7 with doors, hood, and pop-up headlights open](assets/photos/Forza%20Horizon%206%209_25_2026%204_59_38%20PM.jpg)
+
+![Mazda RX-7 with its side window hidden](assets/photos/Forza%20Horizon%206%209_25_2026%205_00_11%20PM.jpg)
+
+![Mazda RX-7 with pop-up headlights open](assets/photos/Forza%20Horizon%206%209_25_2026%205_00_34%20PM.jpg)
+
+![Mazda RX-7 with hood open](assets/photos/Forza%20Horizon%206%209_25_2026%205_01_11%20PM.jpg)
+
+![Nissan Silvia with pop-up headlights open](assets/photos/Forza%20Horizon%206%209_25_2026%205_02_41%20PM.jpg)
+
+![Nissan Silvia with panels and pop-up headlights open](assets/photos/Forza%20Horizon%206%209_25_2026%205_03_02%20PM.jpg)
+
+![Nissan Silvia with pop-up headlights open, front view](assets/photos/Forza%20Horizon%206%209_25_2026%205_03_45%20PM.jpg)
 
 ## Credits
 
-JXRDN for designing the UI and RE. GPT 5.6 for making probes and coding a
-functional tool.
+JXRDN for UI design and reverse engineering, with GPT-5.6 assistance on probes
+and implementation.
 
-## Here is the tool
-
-<img width="1260" height="1071" alt="Forzavista Anywhere" src="https://github.com/user-attachments/assets/689be984-60c3-4fba-85b4-1906d19a1e80" />
-
-## Here are some screenshots of the tool in use
-
-<img width="2160" height="1215" alt="Forza Horizon 6 9_5_2026 10_14_28 AM_compressed" src="https://github.com/user-attachments/assets/d0a00a61-5dc3-483b-ab85-6240a687e2a9" />
-
-<img width="3840" height="2160" alt="Forza Horizon 6 9_7_2026 5_50_48 PM" src="https://github.com/user-attachments/assets/1807586d-c790-45b3-9b0d-ced8be216839" />
-
-<img width="3840" height="2160" alt="Forza Horizon 6 9_2_2026 8_36_34 PM_compressed" src="https://github.com/user-attachments/assets/c3a8a905-08b9-4f4d-ba14-805b8228dad4" />
-
-<img width="3840" height="2160" alt="Forza Horizon 6 9_5_2026 12_08_52 PM" src="https://github.com/user-attachments/assets/91ac4a17-ee5e-42bf-ae8c-1bdccc290bf3" />
-
-<img width="3840" height="2160" alt="Forzavista Anywhere vehicle example" src="https://github.com/user-attachments/assets/48b19d0d-5e3c-451f-b164-63b926b7556f" />
-
-See [CHANGELOG.md](CHANGELOG.md) for the complete release history.
+See [CHANGELOG.md](CHANGELOG.md) for release history.

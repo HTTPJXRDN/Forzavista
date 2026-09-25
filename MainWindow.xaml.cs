@@ -29,6 +29,10 @@ public partial class MainWindow : Window
         new("Active aero", "openaero", "closeaero"),
         new("Pop-up headlights", "openheadlights", "closeheadlights"),
         new("Vents", "openvents", "closevents"),
+        new("Left front window", "openwindowLF", "closewindowLF"),
+        new("Right front window", "openwindowRF", "closewindowRF"),
+        new("Left rear window", "openwindowLR", "closewindowLR"),
+        new("Right rear window", "openwindowRR", "closewindowRR"),
     ];
     private static readonly string[] ExplodePanels =
     [
@@ -39,10 +43,14 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, string> _baseLabels = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<Button> _actionButtons = [];
     private readonly SemaphoreSlim _actionGate = new(1, 1);
+    private readonly SemaphoreSlim _bindingGate = new(1, 1);
     private readonly HashSet<string> _openPanels = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _openWindows = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer _statusTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private int? _sessionProcessId;
     private ulong? _sessionVehicle;
+    private ulong? _sessionComponent;
+    private string? _sessionCarToken;
     private bool _ownsPresentationFlag;
     private int _presentationRestoreGeneration;
     private bool _maxDetailOn;
@@ -55,7 +63,7 @@ public partial class MainWindow : Window
     private const int WM_HOTKEY = 0x0312;
     private const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_SHIFT = 0x4, MOD_NOREPEAT = 0x4000;
     private readonly Dictionary<string, (ModifierKeys Mods, Key Key)> _hotkeys = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<int, string> _hotkeyIdToAction = new();
+    private readonly Dictionary<int, string[]> _hotkeyIdToActions = new();
     private bool _bindMode;
     private string? _capturingAction;
     private IntPtr _hwnd;
@@ -68,7 +76,6 @@ public partial class MainWindow : Window
     // ----- Xbox controller bindings -----
     private readonly DispatcherTimer _controllerTimer = new() { Interval = TimeSpan.FromMilliseconds(35) };
     private readonly Dictionary<string, uint> _controllerBindings = new(StringComparer.OrdinalIgnoreCase);
-    private bool _controllerBindMode;
     private string? _capturingControllerAction;
     private bool _controllerCaptureArmed;
     private uint _controllerCaptureMask;
@@ -76,13 +83,17 @@ public partial class MainWindow : Window
     private uint _previousControllerMask;
     private int? _activeControllerIndex;
 
-    private static string HotkeyPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "ForzavistaFreeRoam", "hotkeys.json");
+    private static string BindingDirectory =>
+        Environment.GetEnvironmentVariable("FORZAVISTA_BINDINGS_DIR") is { Length: > 0 } directory &&
+        Path.IsPathFullyQualified(directory)
+            ? directory
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "ForzavistaFreeRoam");
 
-    private static string ControllerBindingPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "ForzavistaFreeRoam", "controller-bindings.json");
+    private static string HotkeyPath => Path.Combine(BindingDirectory, "hotkeys.json");
+
+    private static string ControllerBindingPath =>
+        Path.Combine(BindingDirectory, "controller-bindings.json");
 
     private Brush Good => (Brush)FindResource("Good");
     private Brush Warn => (Brush)FindResource("Warn");
@@ -93,12 +104,10 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         BuildPanelRows();
-        WireActionButton(ExplodeButton, "explode", "EXPLODE");
-        WireActionButton(ImplodeButton, "implode", "IMPLODE");
+        WireActionButton(AllPanelsButton, "toggleall", "EXPLODE");
         WireActionButton(ResetButton, "resetstate", "RESET STATE");
         WireActionButton(MaxDetailButton, "maxdetail", "MAX DETAIL: OFF");
-        _actionButtons.Add(ExplodeButton);
-        _actionButtons.Add(ImplodeButton);
+        _actionButtons.Add(AllPanelsButton);
         _actionButtons.Add(ResetButton);
         _actionButtons.Add(MaxDetailButton);
         LoadHotkeys();
@@ -178,46 +187,53 @@ public partial class MainWindow : Window
 
     private void BuildPanelRows()
     {
+        var left = Parts.Take(8).ToArray(); // doors, hood, trunk, roof, storage
+        var right = Parts.Skip(11).Concat(Parts.Skip(8).Take(3)).ToArray();
         PanelGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        PanelGrid.Children.Add(HeaderCell("PART", 0));
-        PanelGrid.Children.Add(HeaderCell("OPEN", 1));
-        PanelGrid.Children.Add(HeaderCell("CLOSE", 2));
+        var leftHeader = HeaderCell("PANELS", 0);
+        Grid.SetColumnSpan(leftHeader, 2);
+        PanelGrid.Children.Add(leftHeader);
+        var rightHeader = HeaderCell("WINDOWS & DYNAMIC", 3);
+        Grid.SetColumnSpan(rightHeader, 2);
+        PanelGrid.Children.Add(rightHeader);
 
         var divider = new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
-        for (var i = 0; i < Parts.Length; i++)
+        for (var i = 0; i < Math.Max(left.Length, right.Length); i++)
         {
-            var part = Parts[i];
             var row = i + 1;
             PanelGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-            // thin divider along the bottom of every row except the last
-            if (i < Parts.Length - 1)
-            {
-                var line = new Border
-                {
-                    Height = 1, Background = divider, VerticalAlignment = VerticalAlignment.Bottom,
-                    Margin = new Thickness(4, 0, 6, 0)
-                };
-                Grid.SetRow(line, row); Grid.SetColumn(line, 0); Grid.SetColumnSpan(line, 3);
-                PanelGrid.Children.Add(line);
-            }
-
-            var label = new TextBlock
-            {
-                Text = part.Label, Foreground = Ink, FontSize = 12.5,
-                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 5, 14, 5)
-            };
-            Grid.SetRow(label, row); Grid.SetColumn(label, 0);
-            PanelGrid.Children.Add(label);
-
-            var open = MakeActionButton("OPEN", "PinkButton", part.OpenAction);
-            Grid.SetRow(open, row); Grid.SetColumn(open, 1);
-            PanelGrid.Children.Add(open);
-
-            var close = MakeActionButton("CLOSE", "GhostButton", part.CloseAction);
-            Grid.SetRow(close, row); Grid.SetColumn(close, 2);
-            PanelGrid.Children.Add(close);
+            if (i < left.Length) AddPanelCell(left[i], row, 0, 1, divider, i < left.Length - 1);
+            if (i < right.Length) AddPanelCell(right[i], row, 3, 4, divider, i < right.Length - 1);
         }
+    }
+
+    private void AddPanelCell(ActionPair part, int row, int labelColumn, int buttonColumn,
+        Brush divider, bool addDivider)
+    {
+        if (addDivider)
+        {
+            var line = new Border
+            {
+                Height = 1, Background = divider, VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(4, 0, 6, 0)
+            };
+            Grid.SetRow(line, row); Grid.SetColumn(line, labelColumn);
+            Grid.SetColumnSpan(line, 2);
+            PanelGrid.Children.Add(line);
+        }
+
+        var label = new TextBlock
+        {
+            Text = part.Label, Foreground = Ink, FontSize = 12.5,
+            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 5, 8, 5),
+            TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = part.Label
+        };
+        Grid.SetRow(label, row); Grid.SetColumn(label, labelColumn);
+        PanelGrid.Children.Add(label);
+
+        var toggle = MakeActionButton("OPEN", "PinkButton", "toggle" + part.OpenAction[4..]);
+        Grid.SetRow(toggle, row); Grid.SetColumn(toggle, buttonColumn);
+        PanelGrid.Children.Add(toggle);
     }
 
     private TextBlock HeaderCell(string text, int col)
@@ -235,7 +251,7 @@ public partial class MainWindow : Window
     {
         var b = new Button
         {
-            Content = text, Style = (Style)FindResource(styleKey), Height = 32, MinWidth = 100,
+            Content = text, Style = (Style)FindResource(styleKey), Height = 32, MinWidth = 150,
             Margin = new Thickness(6, 3, 0, 3), IsEnabled = false, Padding = new Thickness(10, 0, 10, 0)
         };
         WireActionButton(b, action, text);
@@ -256,7 +272,6 @@ public partial class MainWindow : Window
     {
         var action = (string)((Button)sender).Tag;
         if (_bindMode) { BeginCapture(action); return; }
-        if (_controllerBindMode) { BeginControllerCapture(action); return; }
         await InvokeActionAsync(action);
     }
 
@@ -264,19 +279,97 @@ public partial class MainWindow : Window
     {
         var action = (string)((Button)sender).Tag;
         if (_bindMode) ClearBinding(action);
-        else if (_controllerBindMode) ClearControllerBinding(action);
     }
 
-    private Task InvokeActionAsync(string action) => action.ToLowerInvariant() switch
+    private Task InvokeActionAsync(string action)
     {
-        "explode" => ExplodeAsync(),
-        "implode" => ImplodeAsync(),
-        "resetstate" => ResetAsync(),
-        "maxdetail" => MaxDetailAsync(),
-        "openheadlights" => PopupHeadlightsAsync(true),
-        "closeheadlights" => PopupHeadlightsAsync(false),
-        _ => SendActionAsync(action)
-    };
+        SessionLog.Write("action_requested", action: action, gamePid: _sessionProcessId,
+            carToken: _sessionCarToken, component: _sessionComponent);
+        return action.ToLowerInvariant() switch
+        {
+            "toggleall" or "explode" or "implode" => ToggleAllAsync(),
+            "resetstate" => ResetAsync(),
+            "maxdetail" => MaxDetailAsync(),
+            "openheadlights" => PopupHeadlightsAsync(true),
+            "closeheadlights" => PopupHeadlightsAsync(false),
+            _ when action.StartsWith("toggle", StringComparison.OrdinalIgnoreCase)
+                => TogglePartAsync(action),
+            _ when NativeCarControl.SupportedWindowActions.Contains(action, StringComparer.OrdinalIgnoreCase)
+                => WindowAsync(action),
+            _ => SendActionAsync(action)
+        };
+    }
+
+    private async Task InvokeBoundActionsAsync(IReadOnlyList<string> actions, string source)
+    {
+        await _bindingGate.WaitAsync();
+        try
+        {
+            var parts = Parts.Select(part => (part.OpenAction, part.CloseAction)).ToArray();
+            string[]? availableWindows = null;
+            if (actions.Any(action => action.StartsWith("togglewindow", StringComparison.OrdinalIgnoreCase) ||
+                                      action.StartsWith("openwindow", StringComparison.OrdinalIgnoreCase) ||
+                                      action.StartsWith("closewindow", StringComparison.OrdinalIgnoreCase)))
+            {
+                await _actionGate.WaitAsync();
+                try { availableWindows = await Task.Run(NativeCarControl.GetAvailableWindowPositions); }
+                finally { _actionGate.Release(); }
+            }
+            var selected = BindingActionPlanner.Plan(actions,
+                parts, _openPanels, _openWindows, availableWindows);
+
+            SessionLog.Write("binding_triggered", source, action: string.Join(",", selected),
+                gamePid: _sessionProcessId, carToken: _sessionCarToken, component: _sessionComponent);
+            if (selected.Length == 0)
+            {
+                SetControlsStatus("No bound controls are available on this car.", Warn);
+                return;
+            }
+            foreach (var action in selected)
+                await InvokeActionAsync(action);
+        }
+        catch (Exception ex)
+        {
+            SessionLog.Write("binding_error", ex.ToString(), gamePid: _sessionProcessId,
+                carToken: _sessionCarToken, component: _sessionComponent);
+            SetControlsStatus($"Binding failed: {ex.Message}", Warn);
+        }
+        finally { _bindingGate.Release(); }
+    }
+
+    private bool IsPartOpen(ActionPair part) =>
+        part.OpenAction.StartsWith("openwindow", StringComparison.OrdinalIgnoreCase)
+            ? _openWindows.Contains(part.OpenAction["openwindow".Length..])
+            : _openPanels.Contains(part.OpenAction[4..]);
+
+    private bool AreAllExplodePanelsOpen() => ExplodePanels.All(_openPanels.Contains);
+
+    private Task ToggleAllAsync() => AreAllExplodePanelsOpen() ? ImplodeAsync() : ExplodeAsync();
+
+    private Task TogglePartAsync(string action)
+    {
+        var part = Parts.FirstOrDefault(part =>
+            action.Equals("toggle" + part.OpenAction[4..], StringComparison.OrdinalIgnoreCase));
+        if (part is null) throw new InvalidOperationException("Unknown toggle action.");
+        return InvokeActionAsync(IsPartOpen(part) ? part.CloseAction : part.OpenAction);
+    }
+
+    private async Task WindowAsync(string action)
+    {
+        await _actionGate.WaitAsync();
+        try
+        {
+            var message = await Task.Run(() => NativeCarControl.SetWindowOpen(action));
+            var opening = action.StartsWith("openwindow", StringComparison.OrdinalIgnoreCase);
+            var window = action[(opening ? "openwindow".Length : "closewindow".Length)..];
+            if (opening) _openWindows.Add(window);
+            else _openWindows.Remove(window);
+            RefreshLabel("togglewindow" + window);
+            SetControlsStatus(message, Good);
+        }
+        catch (Exception ex) { SetControlsStatus(ex.Message, Warn); }
+        finally { _actionGate.Release(); }
+    }
 
     private async Task PopupHeadlightsAsync(bool open)
     {
@@ -299,6 +392,8 @@ public partial class MainWindow : Window
                     message = $"{message}; presentation reset scheduled";
                 }
             }
+            RefreshLabel("toggleheadlights");
+            RefreshLabel("toggleall");
             SetControlsStatus(message, Good);
         }
         catch (Exception ex) { SetControlsStatus(ex.Message, Warn); }
@@ -327,6 +422,8 @@ public partial class MainWindow : Window
                         message = $"{message}; presentation reset scheduled";
                     }
                 }
+                RefreshLabel("toggle" + panel);
+                RefreshLabel("toggleall");
             }
             else
             {
@@ -335,6 +432,13 @@ public partial class MainWindow : Window
                 message = isRoof
                     ? await Task.Run(NativeCarControl.ToggleRoof)
                     : await Task.Run(() => NativeCarControl.TriggerPanel(action));
+                if (action.StartsWith("open", StringComparison.OrdinalIgnoreCase))
+                    _openPanels.Add(action[4..]);
+                else if (action.StartsWith("close", StringComparison.OrdinalIgnoreCase))
+                    _openPanels.Remove(action[5..]);
+                RefreshLabel("toggle" + (action.StartsWith("open", StringComparison.OrdinalIgnoreCase)
+                    ? action[4..] : action[5..]));
+                RefreshLabel("toggleall");
             }
             SetControlsStatus(message, Good);
         }
@@ -351,6 +455,7 @@ public partial class MainWindow : Window
             var message = await Task.Run(() => NativeCarControl.TriggerFreeRoamExplode(open: true));
             foreach (var panel in ExplodePanels) _openPanels.Add(panel);
             _ownsPresentationFlag = true;
+            RefreshAllLabels();
             SetControlsStatus(message, Good);
         }
         catch (Exception ex) { SetControlsStatus(ex.Message, Warn); }
@@ -366,15 +471,13 @@ public partial class MainWindow : Window
             if (_openPanels.Count == 0) { SetControlsStatus("no open panels tracked", Good); return; }
             var message = await Task.Run(() => NativeCarControl.TriggerFreeRoamExplode(open: false));
             foreach (var panel in ExplodePanels) _openPanels.Remove(panel);
+            RefreshAllLabels();
             if (_openPanels.Count == 0)
             {
                 SchedulePresentationRestore();
                 SetControlsStatus($"{message}; presentation reset scheduled", Good);
             }
-            else
-            {
-                SetControlsStatus(message, Good);
-            }
+            else SetControlsStatus(message, Good);
         }
         catch (Exception ex) { SetControlsStatus(ex.Message, Warn); }
         finally { _actionGate.Release(); }
@@ -389,6 +492,7 @@ public partial class MainWindow : Window
             var message = await Task.Run(NativeCarControl.RestoreFreeRoamPresentationFlag);
             _openPanels.Clear();
             _ownsPresentationFlag = false;
+            RefreshAllLabels();
             SetControlsStatus(message, Good);
         }
         catch (Exception ex) { SetControlsStatus(ex.Message, Warn); }
@@ -410,17 +514,14 @@ public partial class MainWindow : Window
         try
         {
             if (generation != _presentationRestoreGeneration ||
-                !_ownsPresentationFlag || _openPanels.Count != 0)
-                return;
-
+                !_ownsPresentationFlag || _openPanels.Count != 0) return;
             var restored = await Task.Run(NativeCarControl.RestoreFreeRoamPresentationFlag);
             _ownsPresentationFlag = false;
             SetControlsStatus(restored, Good);
         }
         catch (Exception ex)
         {
-            if (generation == _presentationRestoreGeneration)
-                SetControlsStatus(ex.Message, Warn);
+            if (generation == _presentationRestoreGeneration) SetControlsStatus(ex.Message, Warn);
         }
         finally { _actionGate.Release(); }
     }
@@ -452,36 +553,61 @@ public partial class MainWindow : Window
         {
             await UpdateGameStatusAsync();
             var status = await Task.Run(NativeCarControl.GetStatus);
-            if (_sessionProcessId != status.ProcessId || _sessionVehicle != status.Vehicle)
+            if (_sessionProcessId != status.ProcessId || _sessionVehicle != status.Vehicle ||
+                _sessionComponent != status.Component ||
+                (status.CarToken is not null &&
+                 !string.Equals(_sessionCarToken, status.CarToken, StringComparison.OrdinalIgnoreCase)))
             {
+                SessionLog.Write("session_change",
+                    $"{_sessionCarToken ?? "<none>"} -> {status.CarToken ?? "<none>"}; ready={status.Ready}",
+                    gamePid: status.ProcessId, carToken: status.CarToken, component: status.Component);
+                NativeCarControl.InvalidateWindowCache();
+                CancelScheduledPresentationRestore();
                 _sessionProcessId = status.ProcessId;
                 _sessionVehicle = status.Vehicle;
+                _sessionComponent = status.Component;
+                _sessionCarToken = status.CarToken;
                 _openPanels.Clear();
+                _openWindows.Clear();
                 _ownsPresentationFlag = false;
+                RefreshAllLabels();
             }
-            if (_capturingAction is null && _capturingControllerAction is null)
+            if (_capturingAction is null && _capturingControllerAction is null &&
+                ControlsStatusText.Text != status.Message)
                 SetControlsStatus(status.Message, status.Ready ? Good : Warn);
 
-            if (_bindMode || _controllerBindMode) { SetActionsEnabled(true); return; }
+            if (_bindMode) { SetActionsEnabled(true); return; }
             SetActionsEnabled(false);
             if (status.Ready)
             {
-                foreach (var action in NativeCarControl.SupportedFreeRoamPanelActions)
-                    if (_buttonsByAction.TryGetValue(action, out var b)) b.IsEnabled = true;
-                if (_buttonsByAction.TryGetValue("openroof", out var or)) or.IsEnabled = true;
-                if (_buttonsByAction.TryGetValue("closeroof", out var cr)) cr.IsEnabled = true;
-                ExplodeButton.IsEnabled = true;
-                ImplodeButton.IsEnabled = true;
+                foreach (var action in NativeCarControl.SupportedFreeRoamPanelActions
+                    .Where(action => action.StartsWith("open", StringComparison.OrdinalIgnoreCase)))
+                    if (_buttonsByAction.TryGetValue("toggle" + action[4..], out var b))
+                        b.IsEnabled = true;
+                if (NativeCarControl.WindowControlsEnabled && status.WindowControlsMapped)
+                    foreach (var part in Parts.Where(part =>
+                        part.OpenAction.StartsWith("openwindow", StringComparison.OrdinalIgnoreCase)))
+                        if (_buttonsByAction.TryGetValue(
+                            "togglewindow" + part.OpenAction["openwindow".Length..], out var b))
+                            b.IsEnabled = true;
+                if (_buttonsByAction.TryGetValue("toggleroof", out var roof)) roof.IsEnabled = true;
+                AllPanelsButton.IsEnabled = true;
                 ResetButton.IsEnabled = true;
                 MaxDetailButton.IsEnabled = true;
             }
+        }
+        catch (Exception ex)
+        {
+            SessionLog.Write("status_poll_error", ex.ToString(), gamePid: _sessionProcessId,
+                carToken: _sessionCarToken, component: _sessionComponent);
+            SetControlsStatus($"status check failed: {ex.Message}", Warn);
         }
         finally { _polling = false; }
     }
 
     private async Task UpdateGameStatusAsync()
     {
-        using var process = Process.GetProcessesByName("forzahorizon6").OrderByDescending(p => p.StartTime).FirstOrDefault();
+        using var process = Process.GetProcessesByName("forzahorizon6").FirstOrDefault();
         if (process is null) { GameStatusText.Text = "game not running"; GameStatusText.Foreground = Dim; return; }
         var liveBuild = await Task.Run(NativeCarControl.GetCurrentBuildName);
         if (liveBuild is not null)
@@ -517,11 +643,14 @@ public partial class MainWindow : Window
     {
         ControlsStatusText.Text = text;
         ControlsStatusText.Foreground = brush;
+        SessionLog.Write("menu_message", text, gamePid: _sessionProcessId,
+            carToken: _sessionCarToken, component: _sessionComponent);
     }
 
     private void RestoreOnExit()
     {
         CancelScheduledPresentationRestore();
+        try { NativeCarControl.RestoreTrackedWindows(); } catch { }
         if (!_ownsPresentationFlag) return;
         try { NativeCarControl.RestoreFreeRoamPresentationFlag(); } catch { }
         _openPanels.Clear();
@@ -532,81 +661,53 @@ public partial class MainWindow : Window
 
     private void BindMode_Click(object sender, RoutedEventArgs e)
     {
-        if (_controllerBindMode) SetControllerBindMode(false);
         _bindMode = !_bindMode;
         if (!_bindMode && _capturingAction is not null) CancelCapture();
-        BindModeButton.Content = _bindMode ? "BIND KEYBOARD: ON" : "BIND KEYBOARD: OFF";
+        BindModeButton.Content = _bindMode ? "SET BINDING: ON" : "SET BINDING: OFF";
         BindModeButton.Style = (Style)FindResource(_bindMode ? "PinkFilled" : "GhostButton");
         if (_bindMode)
         {
             SetActionsEnabled(true);
-            SetControlsStatus("bind mode on — click an action, then press a key (right-click clears)", Warn);
+            SetControlsStatus("click an action, then press a keyboard key or Xbox controller combination", Warn);
         }
         else
         {
+            RegisterAllHotkeys();
             _ = PollStatusAsync();
         }
     }
 
-    private void ControllerBindMode_Click(object sender, RoutedEventArgs e)
+    private void ClearBindings_Click(object sender, RoutedEventArgs e)
     {
-        if (_bindMode)
-        {
-            _bindMode = false;
-            if (_capturingAction is not null) CancelCapture();
-            BindModeButton.Content = "BIND KEYBOARD: OFF";
-            BindModeButton.Style = (Style)FindResource("GhostButton");
-        }
-        SetControllerBindMode(!_controllerBindMode);
-    }
-
-    private void SetControllerBindMode(bool enabled)
-    {
-        _controllerBindMode = enabled;
-        if (!enabled) CancelControllerCapture(showMessage: false);
-        ControllerBindModeButton.Content = enabled ? "BIND CONTROLLER: ON" : "BIND CONTROLLER: OFF";
-        ControllerBindModeButton.Style = (Style)FindResource(enabled ? "PinkFilled" : "GhostButton");
-        if (enabled)
-        {
-            SetActionsEnabled(true);
-            SetControlsStatus("controller bind mode on — click an action, release the controls, then press a button or combination", Warn);
-        }
-        else
-        {
-            _ = PollStatusAsync();
-        }
-    }
-
-    private void ClearHotkeys_Click(object sender, RoutedEventArgs e)
-    {
+        if (_capturingAction is not null) CancelCapture();
         _hotkeys.Clear();
+        _controllerBindings.Clear();
         SaveHotkeys();
+        SaveControllerBindings();
         RegisterAllHotkeys();
         RefreshAllLabels();
-        SetControlsStatus("all hotkeys cleared", Good);
-    }
-
-    private void ClearControllerBindings_Click(object sender, RoutedEventArgs e)
-    {
-        _controllerBindings.Clear();
-        SaveControllerBindings();
-        RefreshAllLabels();
-        SetControlsStatus("all controller bindings cleared", Good);
+        SetControlsStatus("all keyboard and controller bindings cleared", Good);
     }
 
     private void BeginCapture(string action)
     {
         _capturingAction = action;
+        _capturingControllerAction = action;
+        _controllerCaptureArmed = false;
+        _controllerCaptureMask = 0;
         UnregisterAllHotkeys();   // free the keys so the pressed key reaches this window
         Activate();
-        SetControlsStatus($"press a key for '{GetBaseLabel(action)}' … (Esc to cancel)", Warn);
+        SetControlsStatus($"press a key or Xbox button combination for '{GetBaseLabel(action)}' (Esc to cancel)", Warn);
     }
 
     private void CancelCapture()
     {
         _capturingAction = null;
+        _capturingControllerAction = null;
+        _controllerCaptureArmed = false;
+        _controllerCaptureMask = 0;
         RegisterAllHotkeys();
-        SetControlsStatus("hotkey binding cancelled", Dim);
+        SetControlsStatus("binding cancelled", Dim);
     }
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
@@ -619,6 +720,9 @@ public partial class MainWindow : Window
         var action = _capturingAction;
         var mods = Keyboard.Modifiers;
         _capturingAction = null;
+        _capturingControllerAction = null;
+        _controllerCaptureArmed = false;
+        _controllerCaptureMask = 0;
         _hotkeys[action] = (mods, key);
         SaveHotkeys();
         RegisterAllHotkeys();
@@ -632,35 +736,14 @@ public partial class MainWindow : Window
 
     private void ClearBinding(string action)
     {
-        if (!_hotkeys.Remove(action)) return;
-        SaveHotkeys();
+        var keyboardRemoved = _hotkeys.Remove(action);
+        var controllerRemoved = _controllerBindings.Remove(action);
+        if (!keyboardRemoved && !controllerRemoved) return;
+        if (keyboardRemoved) SaveHotkeys();
+        if (controllerRemoved) SaveControllerBindings();
         RegisterAllHotkeys();
         RefreshLabel(action);
-        SetControlsStatus($"cleared hotkey for '{GetBaseLabel(action)}'", Good);
-    }
-
-    private void BeginControllerCapture(string action)
-    {
-        _capturingControllerAction = action;
-        _controllerCaptureArmed = false;
-        _controllerCaptureMask = 0;
-        SetControlsStatus($"release the controller, then press the Xbox button combination for '{GetBaseLabel(action)}'", Warn);
-    }
-
-    private void CancelControllerCapture(bool showMessage = true)
-    {
-        _capturingControllerAction = null;
-        _controllerCaptureArmed = false;
-        _controllerCaptureMask = 0;
-        if (showMessage) SetControlsStatus("controller binding cancelled", Dim);
-    }
-
-    private void ClearControllerBinding(string action)
-    {
-        if (!_controllerBindings.Remove(action)) return;
-        SaveControllerBindings();
-        RefreshLabel(action);
-        SetControlsStatus($"cleared controller binding for '{GetBaseLabel(action)}'", Good);
+        SetControlsStatus($"cleared bindings for '{GetBaseLabel(action)}'", Good);
     }
 
     private void ControllerTimer_Tick(object? sender, EventArgs e)
@@ -687,14 +770,20 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (!_controllerBindMode && IsGameForeground())
+            if (!_bindMode && IsGameForeground())
             {
                 var match = _controllerBindings
                     .Where(binding => (currentMask & binding.Value) == binding.Value &&
                                       (_previousControllerMask & binding.Value) != binding.Value)
                     .OrderByDescending(binding => XboxControllerInput.ButtonCount(binding.Value))
                     .FirstOrDefault();
-                if (!string.IsNullOrEmpty(match.Key)) _ = InvokeActionAsync(match.Key);
+                if (!string.IsNullOrEmpty(match.Key))
+                {
+                    var actions = _controllerBindings
+                        .Where(binding => binding.Value == match.Value)
+                        .Select(binding => binding.Key).ToArray();
+                    _ = InvokeBoundActionsAsync(actions, "controller");
+                }
             }
             _previousControllerMask = currentMask;
         }
@@ -727,6 +816,7 @@ public partial class MainWindow : Window
 
         var action = _capturingControllerAction!;
         var binding = _controllerCaptureMask;
+        _capturingAction = null;
         _capturingControllerAction = null;
         _controllerCaptureArmed = false;
         _controllerCaptureMask = 0;
@@ -741,16 +831,18 @@ public partial class MainWindow : Window
         UnregisterAllHotkeys();
         // RegisterHotKey reserves the gesture across Windows. Reserve it only
         // while the game owns the foreground window so other apps are unaffected.
-        if (_hwnd == IntPtr.Zero || _capturingAction is not null || !IsGameForeground()) return;
+        if (_hwnd == IntPtr.Zero || _bindMode || _capturingAction is not null || !IsGameForeground()) return;
         var id = 1;
-        foreach (var (action, hk) in _hotkeys)
+        foreach (var group in _hotkeys.GroupBy(binding => binding.Value))
         {
+            var hk = group.Key;
             uint fs = MOD_NOREPEAT
                 | (hk.Mods.HasFlag(ModifierKeys.Alt) ? MOD_ALT : 0)
                 | (hk.Mods.HasFlag(ModifierKeys.Control) ? MOD_CONTROL : 0)
                 | (hk.Mods.HasFlag(ModifierKeys.Shift) ? MOD_SHIFT : 0);
             var vk = (uint)KeyInterop.VirtualKeyFromKey(hk.Key);
-            if (vk != 0 && RegisterHotKey(_hwnd, id, fs, vk)) _hotkeyIdToAction[id] = action;
+            if (vk != 0 && RegisterHotKey(_hwnd, id, fs, vk))
+                _hotkeyIdToActions[id] = group.Select(binding => binding.Key).ToArray();
             id++;
         }
     }
@@ -758,9 +850,9 @@ public partial class MainWindow : Window
     private void UnregisterAllHotkeys()
     {
         if (_hwnd != IntPtr.Zero)
-            foreach (var id in _hotkeyIdToAction.Keys.ToList())
+            foreach (var id in _hotkeyIdToActions.Keys.ToList())
                 UnregisterHotKey(_hwnd, id);
-        _hotkeyIdToAction.Clear();
+        _hotkeyIdToActions.Clear();
     }
 
     private void ForegroundWindowChanged(IntPtr hook, uint eventType, IntPtr hwnd,
@@ -787,7 +879,7 @@ public partial class MainWindow : Window
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
         if (msg == WM_HOTKEY && _capturingAction is null &&
-            _hotkeyIdToAction.TryGetValue(wParam.ToInt32(), out var action))
+            _hotkeyIdToActions.TryGetValue(wParam.ToInt32(), out var actions))
         {
             if (!IsGameForeground())
             {
@@ -795,7 +887,7 @@ public partial class MainWindow : Window
                 return IntPtr.Zero;
             }
             handled = true;
-            _ = Dispatcher.InvokeAsync(async () => await InvokeActionAsync(action));
+            _ = Dispatcher.InvokeAsync(async () => await InvokeBoundActionsAsync(actions, "keyboard"));
         }
         return IntPtr.Zero;
     }
@@ -803,8 +895,14 @@ public partial class MainWindow : Window
     // ================= labels & persistence =================
 
     private string GetBaseLabel(string action) =>
-        action.Equals("maxdetail", StringComparison.OrdinalIgnoreCase)
+        action.Equals("toggleall", StringComparison.OrdinalIgnoreCase)
+            ? (AreAllExplodePanelsOpen() ? "IMPLODE" : "EXPLODE")
+        : action.Equals("maxdetail", StringComparison.OrdinalIgnoreCase)
             ? (_maxDetailOn ? "MAX DETAIL: ON" : "MAX DETAIL: OFF")
+            : action.StartsWith("toggle", StringComparison.OrdinalIgnoreCase)
+                ? (Parts.FirstOrDefault(part =>
+                    action.Equals("toggle" + part.OpenAction[4..], StringComparison.OrdinalIgnoreCase)) is { } part &&
+                    IsPartOpen(part) ? "CLOSE" : "OPEN")
             : _baseLabels.TryGetValue(action, out var label) ? label : action;
 
     private void RefreshLabel(string action)
@@ -876,6 +974,7 @@ public partial class MainWindow : Window
             if (map is null) return;
             foreach (var (action, gesture) in map)
                 if (TryParse(gesture, out var m, out var k)) _hotkeys[action] = (m, k);
+            MigrateLegacyAllBinding(_hotkeys);
         }
         catch { }
     }
@@ -900,6 +999,7 @@ public partial class MainWindow : Window
             if (map is null) return;
             foreach (var (action, gesture) in map)
                 if (XboxControllerInput.TryParse(gesture, out var mask)) _controllerBindings[action] = mask;
+            MigrateLegacyAllBinding(_controllerBindings);
         }
         catch { }
     }
@@ -914,6 +1014,19 @@ public partial class MainWindow : Window
                 JsonSerializer.Serialize(map, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch { }
+    }
+
+    private static void MigrateLegacyAllBinding<T>(Dictionary<string, T> bindings)
+    {
+        if (!bindings.ContainsKey("toggleall"))
+        {
+            if (bindings.TryGetValue("explode", out var explode))
+                bindings["toggleall"] = explode;
+            else if (bindings.TryGetValue("implode", out var implode))
+                bindings["toggleall"] = implode;
+        }
+        bindings.Remove("explode");
+        bindings.Remove("implode");
     }
 
     [DllImport("user32.dll", SetLastError = true)]

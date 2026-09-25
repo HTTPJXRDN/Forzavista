@@ -29,6 +29,9 @@ internal sealed record GameBuildProfile
     internal ulong? PresentationServiceVtableRva { get; init; }
     internal ulong? PresentationEventHubVtableRva { get; init; }
     internal ulong? RenderSystemGlobalRva { get; init; }
+    internal ulong? CarRenderModelWrapperVtableRva { get; init; }
+    internal ulong? CarModelInstanceVtableRva { get; init; }
+    internal ulong? CarModelResourceVtableRva { get; init; }
 }
 
 internal static class GameBuildProfiles
@@ -71,7 +74,10 @@ internal static class GameBuildProfiles
             HandlerRva = 0x04A90D50,
             OwnerVtableRva = 0x06F93FF8,
             BooleanTriggerSetterRva = 0x02A8A1A0,
-            RenderSystemGlobalRva = 0x0A8AF088
+            RenderSystemGlobalRva = 0x0A8AF088,
+            CarRenderModelWrapperVtableRva = 0x065ADCA8,
+            CarModelInstanceVtableRva = 0x0645DA08,
+            CarModelResourceVtableRva = 0x0645D878
         },
         new()
         {
@@ -88,7 +94,10 @@ internal static class GameBuildProfiles
             HandlerRva = 0x04A26470,
             OwnerVtableRva = 0x06F83318,
             BooleanTriggerSetterRva = 0x02A0D190,
-            RenderSystemGlobalRva = 0x0A8278F0
+            RenderSystemGlobalRva = 0x0A8278F0,
+            CarRenderModelWrapperVtableRva = 0x0659BB68,
+            CarModelInstanceVtableRva = 0x0644B808,
+            CarModelResourceVtableRva = 0x0644B678
         }
     ];
 

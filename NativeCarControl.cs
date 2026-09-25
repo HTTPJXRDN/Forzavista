@@ -2,17 +2,25 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace ForzavistaFreeRoam;
 
 internal sealed record NativeControlStatus(bool Ready, bool PresentationActive, int? ProcessId,
-    ulong? Vehicle, string Message);
+    ulong? Vehicle, ulong? Component, string? CarToken, bool WindowControlsMapped, string Message);
 
-internal static class NativeCarControl
+internal static partial class NativeCarControl
 {
+    // Free Roam window controls are available only on builds with mapped render wrappers.
+    // An explicit opt-out is retained for cautious test sessions.
+    internal static readonly bool WindowControlsEnabled =
+        Environment.GetEnvironmentVariable("FORZAVISTA_DISABLE_WINDOWS") != "1";
     private static readonly string[] GameProcessNames = ["forzahorizon6"];
     private static DynamicContextHint? _dynamicContextHint;
+    private static WindowWrapperCache? _windowWrapperCache;
+
+    internal static void InvalidateWindowCache() => _windowWrapperCache = null;
 
     internal static bool IsGameProcessName(string processName) =>
         GameProcessNames.Contains(processName, StringComparer.OrdinalIgnoreCase);
@@ -46,9 +54,9 @@ internal static class NativeCarControl
     // Homespace(8) is confirmed to force full car detail but swaps more scene.
     // Change MaxDetailRenderMode to retarget the toggle without other edits.
     internal const int FreeroamRenderMode = 9;
-    // Homespace(8) snaps the car to full Autovista/max detail.
-    // ThreeTwoOne(3) is a transient pre-race countdown scenario and does not
-    // persist. Change here to retarget the toggle.
+    // Homespace(8) is the mode confirmed (HANDOFF §109) to snap the car to full
+    // Autovista/max detail. ThreeTwoOne(3) is a transient pre-race countdown
+    // scenario and does not persist. Change here to retarget the toggle.
     internal const int MaxDetailRenderMode = 8;
     private static readonly IReadOnlyDictionary<string, (string Trigger, bool Value)> ActionTriggers =
         new Dictionary<string, (string Trigger, bool Value)>(StringComparer.OrdinalIgnoreCase)
@@ -74,8 +82,9 @@ internal static class NativeCarControl
             ["openaero"] = "wing_open", ["closeaero"] = "wing_close",
             ["openvents"] = "vent_open", ["closevents"] = "vent_close"
         };
-    // Managed presentation triggers are garage-scoped. Free Roam uses the
-    // session vehicle's animation component through the separate action list.
+    // This legacy managed path remains garage-scoped. The V8 internal proof now
+    // provides a separate, visually verified free-roam path; wire that session
+    // controller into the form before enabling these buttons in free roam.
     internal static IReadOnlyCollection<string> SupportedPanelActions { get; } = ActionTriggers.Keys.ToArray();
     internal static IReadOnlyCollection<string> SupportedFreeRoamPanelActions { get; } =
     [
@@ -88,6 +97,307 @@ internal static class NativeCarControl
         "openaero", "closeaero",
         "openheadlights", "closeheadlights"
     ];
+    internal static IReadOnlyCollection<string> SupportedWindowActions { get; } =
+    [
+        "openwindowLF", "closewindowLF",
+        "openwindowRF", "closewindowRF",
+        "openwindowLR", "closewindowLR",
+        "openwindowRR", "closewindowRR"
+    ];
+
+    internal static string SetWindowOpen(string action)
+    {
+        if (!WindowControlsEnabled)
+            throw new InvalidOperationException("Window controls were disabled for this session.");
+        if (!SupportedWindowActions.Contains(action, StringComparer.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Unsupported window control.");
+
+        var opening = action.StartsWith("open", StringComparison.OrdinalIgnoreCase);
+        var requested = action[^2..].ToUpperInvariant();
+        using var context = Locate(action: true);
+        if (!HasWindowMapping(context.Profile))
+            throw new InvalidOperationException("Window controls are not mapped for this game build.");
+        var target = ValidateAnimationTarget(context);
+        var wrappers = ResolveWindowWrappers(context, target);
+        var current = ValidateAnimationTarget(context);
+        if (current.Vehicle != target.Vehicle || current.Component != target.Component)
+            throw new InvalidOperationException("Current car changed during window discovery; try again.");
+        var actualStem = requested switch
+        {
+            "LF" => "glassLF",
+            "RF" => "glassRF",
+            "LR" => wrappers.Any(item => WindowStem(item.Path).Equals("glassLM", StringComparison.OrdinalIgnoreCase))
+                ? "glassLM" : "glassLR",
+            "RR" => wrappers.Any(item => WindowStem(item.Path).Equals("glassRM", StringComparison.OrdinalIgnoreCase))
+                ? "glassRM" : "glassRR",
+            _ => throw new InvalidOperationException("Unknown window position.")
+        };
+        var selected = wrappers.Where(item =>
+            WindowStem(item.Path).Equals(actualStem, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (selected.Length == 0)
+            throw new InvalidOperationException($"{requested} has no separately rendered side-window layers on this car.");
+
+        foreach (var item in selected)
+        {
+            current = ValidateAnimationTarget(context);
+            if (current.Vehicle != target.Vehicle || current.Component != target.Component)
+                throw new InvalidOperationException("Current car changed before window update completed.");
+            var vector = ValidateWindowVector(context, item);
+            var wantedEnd = opening ? vector.Begin : vector.Capacity;
+            if (vector.End == wantedEnd) continue;
+            Write(context.Handle, item.Wrapper + 0x308, BitConverter.GetBytes(wantedEnd));
+            var verified = ValidateWindowVector(context, item);
+            if (verified.End != wantedEnd)
+                throw new InvalidOperationException($"Window render state did not persist for {item.Path}.");
+        }
+        return $"{requested} window {(opening ? "opened" : "closed")} on {selected[0].CarToken} " +
+            $"({selected.Length} glass layer{(selected.Length == 1 ? "" : "s")})";
+    }
+
+    internal static string[] GetAvailableWindowPositions()
+    {
+        if (!WindowControlsEnabled) return [];
+        using var context = Locate(action: false);
+        if (!HasWindowMapping(context.Profile)) return [];
+        var target = ValidateAnimationTarget(context);
+        WindowWrapper[] wrappers;
+        try { wrappers = ResolveWindowWrappers(context, target); }
+        catch (InvalidOperationException ex) when (ex.Message == "current-car window render wrappers were not found")
+        {
+            return [];
+        }
+        var stems = wrappers.Select(item => WindowStem(item.Path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var positions = new List<string>(4);
+        if (stems.Contains("glassLF")) positions.Add("LF");
+        if (stems.Contains("glassRF")) positions.Add("RF");
+        if (stems.Contains("glassLM") || stems.Contains("glassLR")) positions.Add("LR");
+        if (stems.Contains("glassRM") || stems.Contains("glassRR")) positions.Add("RR");
+        return positions.ToArray();
+    }
+
+    internal static string RestoreTrackedWindows()
+    {
+        var cache = _windowWrapperCache;
+        if (cache is null) return "no tracked windows";
+        using var context = Locate(action: true);
+        var target = ValidateAnimationTarget(context);
+        if (cache.ProcessId != context.ProcessId || cache.Vehicle != target.Vehicle ||
+            cache.Component != target.Component)
+        {
+            _windowWrapperCache = null;
+            return "tracked car changed";
+        }
+        var restored = 0;
+        foreach (var item in cache.Wrappers)
+        {
+            var vector = ValidateWindowVector(context, item);
+            if (vector.End == vector.Capacity) continue;
+            Write(context.Handle, item.Wrapper + 0x308, BitConverter.GetBytes(vector.Capacity));
+            if (ValidateWindowVector(context, item).End != vector.Capacity)
+                throw new InvalidOperationException($"Window restoration did not persist for {item.Path}.");
+            restored++;
+        }
+        return restored == 0 ? "windows already restored" : $"restored {restored} window layers";
+    }
+
+    private static WindowWrapper[] ResolveWindowWrappers(NativeContext context, AnimationTarget target)
+    {
+        var currentCarToken = TryGetCurrentCarToken(context, target);
+        if (currentCarToken is null)
+            throw new InvalidOperationException("current-car window identity could not be verified; no windows changed");
+        var cached = _windowWrapperCache;
+        if (cached is not null && cached.ProcessId == context.ProcessId &&
+            cached.Vehicle == target.Vehicle && cached.Component == target.Component &&
+            cached.CarToken.Equals(currentCarToken, StringComparison.OrdinalIgnoreCase) &&
+            cached.Wrappers.All(item => HasUsableWindowVector(context, item)))
+            return cached.Wrappers;
+        _windowWrapperCache = null;
+
+        var profile = context.Profile;
+        if (profile.CarRenderModelWrapperVtableRva is not { } wrapperVtableRva ||
+            profile.CarModelInstanceVtableRva is not { } instanceVtableRva ||
+            profile.CarModelResourceVtableRva is not { } modelVtableRva)
+            throw new InvalidOperationException("window controls are not mapped for this game build yet");
+
+        // A car's render wrappers are not guaranteed to occupy one 64 MB
+        // allocator segment. After a car swap the DBX's eight side-window
+        // layers were observed across more than 100 MB of committed memory.
+        const ulong arenaSize = 0x10000000;
+        const ulong radius = arenaSize / 2;
+        const int chunkSize = 0x10000;
+        var aligned = target.Component & ~0xFFFFUL;
+        if (aligned < radius) throw new InvalidOperationException("current-car render arena is unavailable");
+        var start = aligned - radius;
+        var wrapperVtable = context.Module + wrapperVtableRva;
+        var instanceVtable = context.Module + instanceVtableRva;
+        var modelVtable = context.Module + modelVtableRva;
+        var matches = new List<WindowWrapper>();
+
+        for (ulong offset = 0; offset < arenaSize; offset += chunkSize)
+        {
+            byte[] bytes;
+            try { bytes = Read(context.Handle, start + offset, chunkSize); }
+            catch { continue; }
+            for (var index = 0; index <= bytes.Length - 8; index += 8)
+            {
+                if (BitConverter.ToUInt64(bytes, index) != wrapperVtable) continue;
+                try
+                {
+                    var wrapper = start + offset + (ulong)index;
+                    var header = Read(context.Handle, wrapper, 0x318);
+                    var instance = BitConverter.ToUInt64(header, 0x60);
+                    if (instance < 0x10000 || BitConverter.ToUInt64(header, 0x68) != instance - 0x10 ||
+                        ReadUInt64(context.Handle, instance) != instanceVtable) continue;
+                    var model = ReadUInt64(context.Handle, instance + 0x20);
+                    if (model < 0x10000 || ReadUInt64(context.Handle, model) != modelVtable) continue;
+                    var pathAddress = ReadUInt64(context.Handle, model + 0x80);
+                    if (pathAddress < 0x10000) continue;
+                    var pathBytes = Read(context.Handle, pathAddress, 512);
+                    var end = Array.IndexOf(pathBytes, (byte)0);
+                    if (end is <= 0 or >= 512) continue;
+                    var path = Encoding.ASCII.GetString(pathBytes, 0, end).Replace('/', '\\');
+                    if (!IsExteriorWindow(path) && !IsInteriorWindow(path)) continue;
+                    var carToken = ExtractCarToken(path);
+                    if (carToken is null) continue;
+                    matches.Add(new(wrapper, path, carToken));
+                }
+                catch { }
+            }
+        }
+
+        var candidate = matches.GroupBy(item => item.CarToken, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new
+            {
+                CarToken = group.Key,
+                Items = SelectMovableWindows(group.Where(item => HasUsableWindowVector(context, item)).ToArray(), target.Component),
+                Distance = group.Min(item => item.Wrapper > target.Component
+                    ? item.Wrapper - target.Component : target.Component - item.Wrapper)
+            })
+            .Where(group => group.Items.Any(item => WindowStem(item.Path).Equals("glassLF", StringComparison.OrdinalIgnoreCase)) &&
+                            group.Items.Any(item => WindowStem(item.Path).Equals("glassRF", StringComparison.OrdinalIgnoreCase)) &&
+                            group.CarToken.Equals(currentCarToken, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(group => group.Distance)
+            .ThenByDescending(group => group.Items.Length)
+            .FirstOrDefault() ?? throw new InvalidOperationException("current-car window render wrappers were not found");
+
+        var selected = candidate.Items;
+        foreach (var item in selected) _ = ValidateWindowVector(context, item);
+        _windowWrapperCache = new(context.ProcessId, target.Vehicle, target.Component, candidate.CarToken, selected);
+        return selected;
+    }
+
+    private static string? TryGetCurrentCarToken(NativeContext context, AnimationTarget target)
+    {
+        // The validated player's animation component owns a runtime clip path.
+        // Unlike the vehicle object, this component changes with every car swap.
+        try
+        {
+            var runtime = ReadUInt64(context.Handle, target.Component + 0x28);
+            if (runtime < 0x10000) return null;
+            var clip = ReadUInt64(context.Handle, runtime + 0x80);
+            if (clip < 0x10000) return null;
+            var path = Encoding.ASCII.GetString(Read(context.Handle, clip, 256)).Replace('/', '\\');
+            const string prefix = "game:\\media\\cars\\";
+            var start = path.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
+            if (start is < 0 or > 64) return null;
+            start += prefix.Length;
+            const string suffix = "\\scene\\animations\\mojo\\clip\\carclips_";
+            var end = path.IndexOf(suffix, start, StringComparison.OrdinalIgnoreCase);
+            if (end <= start || end - start > 96) return null;
+            var token = path[start..end];
+            return token.All(ch => char.IsLetterOrDigit(ch) || ch == '_') ? token : null;
+        }
+        catch { return null; }
+    }
+
+    private static WindowWrapper[] SelectMovableWindows(WindowWrapper[] all, ulong component)
+    {
+        var hasLm = all.Any(item => WindowStem(item.Path).Equals("glassLM", StringComparison.OrdinalIgnoreCase));
+        var hasRm = all.Any(item => WindowStem(item.Path).Equals("glassRM", StringComparison.OrdinalIgnoreCase));
+        var stems = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "glassLF", "glassRF", hasLm ? "glassLM" : "glassLR", hasRm ? "glassRM" : "glassRR"
+        };
+        // Different cars have different numbers of side windows. Keep one live
+        // wrapper for each available exterior/interior layer of each position.
+        // Livery and old pooled instances may duplicate a path; the nearest
+        // validated wrapper is the one belonging to this render arena.
+        return all.Where(item => stems.Contains(WindowStem(item.Path)))
+            .GroupBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderBy(item => item.Wrapper > component
+                ? item.Wrapper - component : component - item.Wrapper).First())
+            .OrderBy(item => item.Path, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static WindowVector ValidateWindowVector(NativeContext context, WindowWrapper item)
+    {
+        var expectedVtable = context.Profile.CarRenderModelWrapperVtableRva is { } rva
+            ? context.Module + rva : 0;
+        if (expectedVtable == 0 || ReadUInt64(context.Handle, item.Wrapper) != expectedVtable)
+            throw new InvalidOperationException($"Window wrapper identity changed for {item.Path}.");
+        var instance = ReadUInt64(context.Handle, item.Wrapper + 0x60);
+        if (instance < 0x10000 || ReadUInt64(context.Handle, item.Wrapper + 0x68) != instance - 0x10 ||
+            context.Profile.CarModelInstanceVtableRva is not { } instanceRva ||
+            ReadUInt64(context.Handle, instance) != context.Module + instanceRva ||
+            context.Profile.CarModelResourceVtableRva is not { } modelRva)
+            throw new InvalidOperationException($"Window instance changed for {item.Path}.");
+        var model = ReadUInt64(context.Handle, instance + 0x20);
+        if (model < 0x10000 || ReadUInt64(context.Handle, model) != context.Module + modelRva)
+            throw new InvalidOperationException($"Window model changed for {item.Path}.");
+        var pathAddress = ReadUInt64(context.Handle, model + 0x80);
+        var pathBytes = Read(context.Handle, pathAddress, 512);
+        var pathEnd = Array.IndexOf(pathBytes, (byte)0);
+        if (pathEnd <= 0 || !Encoding.ASCII.GetString(pathBytes, 0, pathEnd).Replace('/', '\\')
+                .Equals(item.Path, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"Window path changed for {item.Path}.");
+        var bytes = Read(context.Handle, item.Wrapper + 0x300, 0x18);
+        var begin = BitConverter.ToUInt64(bytes, 0);
+        var end = BitConverter.ToUInt64(bytes, 8);
+        var capacity = BitConverter.ToUInt64(bytes, 16);
+        if (begin < 0x10000 || capacity <= begin || capacity - begin > 0x10000 ||
+            ((begin | end | capacity) & 0xF) != 0 || end < begin || end > capacity ||
+            (end != begin && end != capacity))
+            throw new InvalidOperationException($"Window render-entry vector shape mismatch for {item.Path}.");
+        return new(begin, end, capacity);
+    }
+
+    private static bool HasUsableWindowVector(NativeContext context, WindowWrapper item)
+    {
+        try { _ = ValidateWindowVector(context, item); return true; }
+        catch { return false; }
+    }
+
+    private static string WindowStem(string path) => Path.GetFileNameWithoutExtension(path)
+        .Replace("_a", "", StringComparison.OrdinalIgnoreCase)
+        .Replace("Int", "", StringComparison.OrdinalIgnoreCase)
+        .Replace("Livery", "", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsExteriorWindow(string path) =>
+        path.Contains("\\exterior\\windows\\", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsInteriorWindow(string path) =>
+        path.Contains("\\interior\\interiorwindows\\", StringComparison.OrdinalIgnoreCase);
+
+    private static string? ExtractCarToken(string path)
+    {
+        const string prefix = "game:\\media\\cars\\";
+        var start = path.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
+        if (start < 0) return null;
+        start += prefix.Length;
+        var end = path.IndexOf("\\scene\\", start, StringComparison.OrdinalIgnoreCase);
+        return end > start ? path[start..end] : null;
+    }
+
+    private sealed record WindowWrapper(ulong Wrapper, string Path, string CarToken);
+    private sealed record WindowWrapperCache(int ProcessId, ulong Vehicle, ulong Component,
+        string CarToken, WindowWrapper[] Wrappers);
+    private readonly record struct WindowVector(ulong Begin, ulong End, ulong Capacity);
+    private static bool HasWindowMapping(GameBuildProfile profile) =>
+        profile.CarRenderModelWrapperVtableRva.HasValue &&
+        profile.CarModelInstanceVtableRva.HasValue &&
+        profile.CarModelResourceVtableRva.HasValue;
+
     internal static NativeControlStatus GetStatus()
     {
         try
@@ -96,14 +406,18 @@ internal static class NativeCarControl
             var target = ValidateAnimationTarget(context);
             var presentation = InspectPresentation(context);
             var presentationActive = presentation == "active";
-            return new(true, presentationActive, context.ProcessId, target.Vehicle,
+            return new(true, presentationActive, context.ProcessId, target.Vehicle, target.Component,
+                TryGetCurrentCarToken(context, target), HasWindowMapping(context.Profile),
                 presentationActive
                     ? "external free-roam panels ready; garage presentation also active"
                     : "external free-roam panel controls ready");
         }
         catch (Exception ex)
         {
-            return new(false, false, TryGetGame()?.Id, null, ex.Message);
+            // The game may have exited between Locate and this error path.
+            // Re-enumerating it here can throw (notably on StartTime) and
+            // turn an ordinary disconnected status into an app crash.
+            return new(false, false, null, null, null, null, false, ex.Message);
         }
     }
 
@@ -242,10 +556,8 @@ internal static class NativeCarControl
         var target = ValidateAnimationTarget(context);
         var flagAddress = target.Vehicle + 0x82A3;
         var flag = Read(context.Handle, flagAddress, 1)[0];
-        if (flag > 1)
-            throw new InvalidOperationException("vehicle Autovista flag is invalid");
-        if (flag == 0)
-            Write(context.Handle, flagAddress, [1]);
+        if (flag > 1) throw new InvalidOperationException("vehicle Autovista flag is invalid");
+        if (flag == 0) Write(context.Handle, flagAddress, [1]);
 
         byte[] expected = [0x48, 0x89, 0x5C, 0x24, 0x10, 0x56, 0x57, 0x41, 0x56, 0x48];
         var setter = context.Module + context.Profile.BooleanTriggerSetterRva;
@@ -485,7 +797,12 @@ internal static class NativeCarControl
 
     private static Process? TryGetGame() => GameProcessNames
         .SelectMany(Process.GetProcessesByName)
-        .OrderByDescending(p => p.StartTime)
+        .OrderByDescending(p =>
+        {
+            try { return p.StartTime; }
+            catch (Win32Exception) { return DateTime.MinValue; }
+            catch (InvalidOperationException) { return DateTime.MinValue; }
+        })
         .FirstOrDefault();
 
     private static NativeContext LocateDynamic(int processId, SafeProcessHandle handle,
