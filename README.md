@@ -57,10 +57,6 @@ Unknown game builds are rejected until their compatibility has been verified.
 
 ## Known issues
 
-- A crash occurred during one multi-car window test. Its cause remains
-  unconfirmed; later extended use and repeated car swaps were stable. If the
-  game becomes unstable, stop using window controls and report the car and
-  action that preceded it.
 - Garage/Forzavista window hiding is not supported.
 - Some cars lack individual panels or glass layers. If an animation does not
   play correctly, click **RESET STATE** and try again.
@@ -69,28 +65,7 @@ Unknown game builds are rejected until their compatibility has been verified.
 - At night, the game's automatic lighting may reopen pop-up headlights after
   the menu closes them.
 
-## Build from source
-
-Requires Windows 10 or 11 x64 and the .NET 10 SDK. From the repository root:
-
-```powershell
-dotnet publish .\ForzavistaFreeRoam.csproj --configuration Release -p:PublishProfile=FolderProfile
-```
-
-The self-contained, single-file executable is written to
-`publish\Forzavista.exe`. The release download is supplied separately; do not
-upload a local `bin`, `obj`, or `publish` folder as source.
-
-Bindings normally use the user's AppData folder. To keep bindings on another
-drive, set `FORZAVISTA_BINDINGS_DIR` to an absolute folder before launching.
-For an opt-in JSONL session log, set `FORZAVISTA_SESSION_LOG_DIR` to an
-absolute folder with free space.
-
 ## Screenshots
-
-These are the photos supplied for 1.3.0. They are stored in this repository,
-so GitHub displays them after the `assets/photos` folder is uploaded with the
-source files.
 
 ![Mazda RX-7 with doors, hood, and pop-up headlights open](assets/photos/Forza%20Horizon%206%209_25_2026%204_59_38%20PM.jpg)
 
