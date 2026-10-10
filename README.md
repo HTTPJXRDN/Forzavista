@@ -134,19 +134,6 @@ investigation; these guards have not been established as its complete fix.
 
 </details>
 
-## Build from source
-
-Install the .NET 10 SDK with Windows desktop support, then run:
-
-```powershell
-dotnet build .\ForzavistaFreeRoam.csproj -c Release
-dotnet publish .\ForzavistaFreeRoam.csproj -c Release -p:PublishProfile=FolderProfile
-```
-
-The publish profile creates a self-contained Windows x64 executable.
-
 ## Credits
 
 JXRDN for UI design and reverse engineering, with AI assistance on probes and implementation.
-
-See [CHANGELOG.md](CHANGELOG.md) for release history.
