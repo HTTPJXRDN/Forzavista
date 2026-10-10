@@ -1,0 +1,68 @@
+{
+  "FormatVersion": 1,
+  "Cars": [
+    {
+      "Car": "SUB_WRXSTI_04",
+      "Left": [
+        {
+          "Path": "Scene/Exterior/PrimaryLights/headlightL_a.modelbin",
+          "Id": 8,
+          "Name": "LBK_smoothChrome_custom_turn",
+          "Resource": "Game:\\Media\\cars\\_library\\materials\\_fmnext\\lamp\\emitter_ch1.materialbin",
+          "Tint": [
+            0.62396044,
+            0.17788842,
+            0.0,
+            1.0
+          ],
+          "Intensity": 4.0,
+          "TintPolicy": "AuthoredEmission"
+        },
+        {
+          "Path": "Scene/Exterior/SecondaryLights/taillightL_a.modelbin",
+          "Id": 9,
+          "Name": "LBK_standardCH1_023_custom_turn",
+          "Resource": "Game:\\Media\\cars\\_library\\materials\\_fmnext\\lamp\\emitter_ch1.materialbin",
+          "Tint": [
+            0.62396044,
+            0.17788842,
+            0.0,
+            1.0
+          ],
+          "Intensity": 16.0,
+          "TintPolicy": "AuthoredEmission"
+        }
+      ],
+      "Right": [
+        {
+          "Path": "Scene/Exterior/PrimaryLights/headlightR_a.modelbin",
+          "Id": 8,
+          "Name": "LBK_smoothChrome_custom_turn",
+          "Resource": "Game:\\Media\\cars\\_library\\materials\\_fmnext\\lamp\\emitter_ch1.materialbin",
+          "Tint": [
+            0.62396044,
+            0.17788842,
+            0.0,
+            1.0
+          ],
+          "Intensity": 4.0,
+          "TintPolicy": "AuthoredEmission"
+        },
+        {
+          "Path": "Scene/Exterior/SecondaryLights/taillightR_a.modelbin",
+          "Id": 9,
+          "Name": "LBK_standardCH1_023_custom_turn",
+          "Resource": "Game:\\Media\\cars\\_library\\materials\\_fmnext\\lamp\\emitter_ch1.materialbin",
+          "Tint": [
+            0.62396044,
+            0.17788842,
+            0.0,
+            1.0
+          ],
+          "Intensity": 16.0,
+          "TintPolicy": "AuthoredEmission"
+        }
+      ]
+    }
+  ]
+}

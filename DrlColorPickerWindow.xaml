@@ -1,0 +1,130 @@
+<Window x:Class="ForzavistaFreeRoam.DrlColorPickerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DRL color" Width="620" Height="610" ResizeMode="NoResize"
+        WindowStyle="None" WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="#FF1D1D1F" Foreground="#FFF4F4F6" FontFamily="Segoe UI"
+        UseLayoutRounding="True" Loaded="Window_Loaded">
+  <Window.Resources>
+    <SolidColorBrush x:Key="PickerPink" Color="#FFE8175D"/>
+    <Style x:Key="PickerButton" TargetType="Button">
+      <Setter Property="Background" Value="#FF313135"/>
+      <Setter Property="Foreground" Value="#FFF4F4F6"/>
+      <Setter Property="BorderBrush" Value="#FF48484E"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="14,8"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="ButtonSurface" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="7" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ButtonSurface" Property="BorderBrush" Value="#FFCC527A"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="ButtonSurface" Property="BorderBrush" Value="#FFFF8CAC"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True"><Setter TargetName="ButtonSurface" Property="Opacity" Value="0.8"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="PickerLabel" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#FF9C9CA2"/>
+      <Setter Property="FontSize" Value="11.5"/>
+    </Style>
+    <Style x:Key="PickerInput" TargetType="TextBox">
+      <Setter Property="Background" Value="#FF232326"/>
+      <Setter Property="Foreground" Value="#FFF4F4F6"/>
+      <Setter Property="BorderBrush" Value="#FF48484E"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="8,7"/>
+      <Setter Property="CaretBrush" Value="#FFF4F4F6"/>
+      <Setter Property="SelectionBrush" Value="#FFE8175D"/>
+      <Setter Property="FontFamily" Value="Consolas"/>
+      <Setter Property="FontSize" Value="14"/>
+    </Style>
+    <LinearGradientBrush x:Key="HueGradient" StartPoint="0,0" EndPoint="1,0">
+      <GradientStop Color="Red" Offset="0"/><GradientStop Color="Yellow" Offset="0.166667"/>
+      <GradientStop Color="Lime" Offset="0.333333"/><GradientStop Color="Cyan" Offset="0.5"/>
+      <GradientStop Color="Blue" Offset="0.666667"/><GradientStop Color="Magenta" Offset="0.833333"/>
+      <GradientStop Color="Red" Offset="1"/>
+    </LinearGradientBrush>
+  </Window.Resources>
+  <Border BorderBrush="#FF48484E" BorderThickness="1" Background="#FF212123">
+    <Grid>
+      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+      <Border Background="#FF161618" BorderBrush="{StaticResource PickerPink}" BorderThickness="0,0,0,2"
+              Padding="20,14" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+        <Grid>
+          <TextBlock Text="DRL COLOR" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource PickerPink}" VerticalAlignment="Center"/>
+          <Button Content="&#x2715;" HorizontalAlignment="Right" Style="{StaticResource PickerButton}"
+                  Padding="10,4" IsCancel="True" Click="Cancel_Click" ToolTip="Close without changing the color"/>
+        </Grid>
+      </Border>
+      <Grid Grid.Row="1" Margin="22,18,22,14">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <TextBlock x:Name="PickerHint" Text="Choose any color, or restore the car’s original DRLs." FontSize="12.5" Foreground="#FFB6B6BD" Margin="0,0,0,16"/>
+        <Grid Grid.Row="1">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="18"/><ColumnDefinition Width="168"/></Grid.ColumnDefinitions>
+          <Border BorderBrush="#FF58585F" BorderThickness="1" CornerRadius="5" ClipToBounds="True">
+            <Grid x:Name="ChartSurface" Height="260" Background="Black" Cursor="Cross" Focusable="True"
+                  AutomationProperties.Name="Color chart: left is white, right is the selected hue, bottom is black. Use arrow keys to adjust."
+                  MouseLeftButtonDown="Chart_MouseLeftButtonDown" MouseMove="Chart_MouseMove"
+                  MouseLeftButtonUp="Chart_MouseLeftButtonUp" LostMouseCapture="Chart_LostMouseCapture"
+                  KeyDown="Chart_KeyDown" SizeChanged="Chart_SizeChanged">
+              <Image x:Name="ChartImage" Stretch="Fill" IsHitTestVisible="False"/>
+              <Canvas IsHitTestVisible="False" ClipToBounds="True">
+                <Ellipse x:Name="ChartMarkerOuter" Width="16" Height="16" Stroke="Black" StrokeThickness="4"/>
+                <Ellipse x:Name="ChartMarkerInner" Width="16" Height="16" Stroke="White" StrokeThickness="2"/>
+              </Canvas>
+            </Grid>
+          </Border>
+          <StackPanel Grid.Column="2">
+            <TextBlock Style="{StaticResource PickerLabel}" Text="SELECTED COLOR" Margin="0,0,0,8"/>
+            <Border x:Name="ColorSwatch" Height="66" CornerRadius="7" BorderThickness="1" BorderBrush="#FF68686F"/>
+            <TextBlock Style="{StaticResource PickerLabel}" Text="HEX" Margin="0,14,0,5"/>
+            <TextBox x:Name="HexInput" Style="{StaticResource PickerInput}" MaxLength="7" TextChanged="HexInput_TextChanged"
+                     AutomationProperties.Name="Hex color" ToolTip="Six hexadecimal digits, for example #FF2E70"/>
+            <TextBlock x:Name="HexError" Text="Use a six-digit HEX color." Foreground="#FFFFB347" FontSize="10.5" Margin="0,4,0,0" Visibility="Hidden"/>
+            <Button Style="{StaticResource PickerButton}" Content="WHITE" Margin="0,12,0,0" Click="White_Click"
+                    ToolTip="Choose pure white"/>
+          </StackPanel>
+        </Grid>
+        <TextBlock Grid.Row="2" Style="{StaticResource PickerLabel}" Text="HUE" Margin="0,15,0,6"/>
+        <Border Grid.Row="3" Height="22" Background="{StaticResource HueGradient}" CornerRadius="5" BorderBrush="#FF68686F" BorderThickness="1">
+          <Slider x:Name="HueSlider" Tag="Hue" Minimum="0" Maximum="360" SmallChange="1" LargeChange="15" ValueChanged="HueSlider_ValueChanged"
+                  AutomationProperties.Name="Hue" IsMoveToPointEnabled="True" VerticalAlignment="Center" Margin="0,-4"/>
+        </Border>
+        <Grid Grid.Row="4" Margin="0,18,0,0">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+          <StackPanel Grid.Column="0"><TextBlock Style="{StaticResource PickerLabel}" Text="RED" Margin="0,0,0,5"/><TextBox x:Name="RedInput" Style="{StaticResource PickerInput}" MaxLength="3" TextChanged="RgbInput_TextChanged" AutomationProperties.Name="Red, from zero to 255"/></StackPanel>
+          <StackPanel Grid.Column="2"><TextBlock Style="{StaticResource PickerLabel}" Text="GREEN" Margin="0,0,0,5"/><TextBox x:Name="GreenInput" Style="{StaticResource PickerInput}" MaxLength="3" TextChanged="RgbInput_TextChanged" AutomationProperties.Name="Green, from zero to 255"/></StackPanel>
+          <StackPanel Grid.Column="4"><TextBlock Style="{StaticResource PickerLabel}" Text="BLUE" Margin="0,0,0,5"/><TextBox x:Name="BlueInput" Style="{StaticResource PickerInput}" MaxLength="3" TextChanged="RgbInput_TextChanged" AutomationProperties.Name="Blue, from zero to 255"/></StackPanel>
+        </Grid>
+        <TextBlock x:Name="RgbError" Grid.Row="5" Text="Each RGB value must be from 0 to 255." Foreground="#FFFFB347" FontSize="11" Margin="0,6,0,0" Visibility="Hidden"/>
+      </Grid>
+      <Border Grid.Row="2" Background="#FF19191C" BorderBrush="#FF3C3C40" BorderThickness="0,1,0,0" Padding="22,15">
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <Button x:Name="OriginalButton" Grid.Column="0" Content="ORIGINAL" Style="{StaticResource PickerButton}" Click="Original_Click" ToolTip="Restore the car’s authored DRL color"/>
+          <Button Grid.Column="2" Content="CANCEL" Style="{StaticResource PickerButton}" IsCancel="True" Click="Cancel_Click" Margin="0,0,10,0"/>
+          <Button x:Name="ApplyButton" Grid.Column="3" Content="APPLY COLOR" Style="{StaticResource PickerButton}"
+                  Background="{StaticResource PickerPink}" BorderBrush="{StaticResource PickerPink}" IsDefault="True" Click="Apply_Click"/>
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>1.3.1.1</Version>
+    <AssemblyName>Forzavista</AssemblyName>
+    <Product>Forzavista Anywhere</Product>
+    <Authors>JXRDN</Authors>
+    <Description>External Forzavista vehicle-control menu for Free Roam.</Description>
+    <Copyright>Copyright (c) 2026 JXRDN</Copyright>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>assets\Icon\Forzavista.ico</ApplicationIcon>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(EnableExperimentalSignals)' == 'true'">
+    <DefineConstants>$(DefineConstants);EXPERIMENTAL_SIGNALS</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="tools\**\*.cs" />
+    <Compile Remove="bridge\**\*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="SignalProbe" />
+    <InternalsVisibleTo Include="LightingTests" />
+    <Resource Include="assets\Logo\FMLogo.png" />
+    <Resource Include="assets\Icon\Forzavista.ico" />
+    <Resource Include="assets\Fonts\go3v2.ttf" />
+    <EmbeddedResource Include="Lighting\drl-color-profiles.json" LogicalName="ForzavistaFreeRoam.Lighting.drl-color-profiles.json" />
+    <EmbeddedResource Include="Signals\native-hazard-profiles.json" LogicalName="ForzavistaFreeRoam.Signals.native-hazard-profiles.json" />
+  </ItemGroup>
+</Project>

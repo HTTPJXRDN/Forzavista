@@ -1,0 +1,272 @@
+<Window x:Class="ForzavistaFreeRoam.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="Forzavista Anywhere" Height="700" Width="1160"
+        MinHeight="620" MinWidth="1060"
+        Icon="/assets/Icon/Forzavista.ico"
+        Background="{StaticResource WinBg}"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Ideal"
+        StateChanged="Window_StateChanged">
+
+  <shell:WindowChrome.WindowChrome>
+    <shell:WindowChrome CaptionHeight="34"
+                        ResizeBorderThickness="6"
+                        CornerRadius="0"
+                        GlassFrameThickness="0"
+                        UseAeroCaptionButtons="False"/>
+  </shell:WindowChrome.WindowChrome>
+
+  <!-- Outer border gives the borderless window a crisp edge -->
+  <Border x:Name="RootBorder" Background="{StaticResource AppGrad}"
+          BorderBrush="{StaticResource Line}" BorderThickness="1">
+    <Grid x:Name="RootGrid" TextElement.Foreground="{StaticResource Ink}">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+      </Grid.RowDefinitions>
+
+      <!-- ===================== TITLE BAR ===================== -->
+      <StackPanel Grid.Row="0">
+        <Border x:Name="TitleBarSurface" Background="{StaticResource TitleBarGrad}" Height="34">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- App name (left) -->
+            <TextBlock Grid.Column="0" VerticalAlignment="Center" Margin="14,0,0,0"
+                       FontFamily="{StaticResource DisplayFont}" FontSize="15"
+                       Foreground="{StaticResource Pink}" Text="FORZAVISTA"/>
+
+            <TextBlock x:Name="VersionText" Grid.Column="1" HorizontalAlignment="Right"
+                       VerticalAlignment="Center" Margin="16,0,12,0" FontSize="11.5"
+                       Foreground="{StaticResource Dim}" IsHitTestVisible="False"
+                       AutomationProperties.Name="Running tool version"/>
+
+            <!-- Caption buttons (right) -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top" HorizontalAlignment="Right">
+              <Button x:Name="MinimizeButton" Style="{StaticResource CaptionButton}" Height="34"
+                      Content="&#xE921;" ToolTip="Minimize" Click="MinimizeButton_Click"/>
+              <Button x:Name="MaximizeButton" Style="{StaticResource CaptionButton}" Height="34"
+                      Content="&#xE922;" ToolTip="Maximize" Click="MaximizeButton_Click"/>
+              <Button x:Name="CloseButton" Style="{StaticResource CaptionCloseButton}" Height="34"
+                      Content="&#xE8BB;" ToolTip="Close" Click="CloseButton_Click"/>
+            </StackPanel>
+          </Grid>
+        </Border>
+        <!-- Fading pink brand line -->
+        <Border Height="2" Background="{StaticResource PinkAccentLine}"/>
+      </StackPanel>
+
+      <!-- ===================== HEADER ===================== -->
+      <Border Grid.Row="1" Background="{StaticResource CardHeadGrad}" Padding="22,10"
+              BorderBrush="{StaticResource Hairline}" BorderThickness="0,0,0,1">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <Image Grid.Column="0" Source="/assets/Logo/FMLogo.png" Height="46" Stretch="Uniform"
+                 RenderOptions.BitmapScalingMode="HighQuality" VerticalAlignment="Center"/>
+          <TextBlock Grid.Column="1" Text="External Free Roam controls for car panels, windows, and detail"
+                     Foreground="{StaticResource Dim}" FontSize="12.5" TextWrapping="Wrap"
+                     VerticalAlignment="Center" Margin="18,0,16,0"/>
+          <TextBlock Grid.Column="2" x:Name="GameStatusText" Text="checking game…"
+                     Foreground="{StaticResource Dim}" FontSize="12.5"
+                     HorizontalAlignment="Right" VerticalAlignment="Center"/>
+        </Grid>
+      </Border>
+
+      <!-- ===================== BODY ===================== -->
+      <Grid Grid.Row="2" Margin="18">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="18"/>
+          <ColumnDefinition Width="322"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- ===== LEFT: panels ===== -->
+        <Border Grid.Column="0" Style="{StaticResource CardBorder}">
+          <Grid>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="*"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Border Grid.Row="0" Style="{StaticResource CardHeadStrip}">
+              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Border Style="{StaticResource HeadAccent}"/>
+                <TextBlock Text="CAR PANELS" FontSize="12" FontWeight="SemiBold"
+                           Foreground="{StaticResource Ink}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+              </StackPanel>
+            </Border>
+            <ScrollViewer x:Name="PanelsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="14,6,10,6">
+              <Grid x:Name="PanelGrid">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="20"/>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+              </Grid>
+            </ScrollViewer>
+
+            <!-- Footer: one bindable all-panel toggle and a separate reset action. -->
+            <Border x:Name="PanelsFooter" Grid.Row="2" BorderBrush="{StaticResource Hairline}" BorderThickness="0,1,0,0"
+                    Background="#22000000" Padding="14,12">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto"/>
+                  <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Button x:Name="AllPanelsButton" Grid.Row="0" Content="EXPLODE" Style="{StaticResource PinkFilled}"
+                        Height="40" Padding="8,0" IsEnabled="False"
+                        ToolTip="Open all supported panels, then close them on the next press"/>
+                <Button x:Name="ResetButton" Grid.Row="1" Content="RESET STATE" Style="{StaticResource GhostButton}"
+                        Height="38" Margin="0,10,0,0" Padding="8,0" IsEnabled="False"
+                        ToolTip="Clear the presentation flag"/>
+              </Grid>
+            </Border>
+          </Grid>
+        </Border>
+
+        <!-- ===== RIGHT: quick actions / display / hotkeys / status ===== -->
+        <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" Padding="0,0,2,0">
+          <StackPanel>
+
+            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,16">
+              <StackPanel>
+                <Border Style="{StaticResource CardHeadStrip}">
+                  <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Style="{StaticResource HeadAccent}"/>
+                    <TextBlock Style="{StaticResource CardTitle}" Text="DISPLAY"/>
+                  </StackPanel>
+                </Border>
+                <StackPanel Margin="14,12,14,14">
+                  <Button x:Name="MaxDetailButton" Content="MAX DETAIL: OFF" Style="{StaticResource GhostButton}" Height="42" IsEnabled="False"/>
+                  <TextBlock Style="{StaticResource Hint}" Text="Forces full Autovista car detail (open-panel geometry). Toggle off to restore normal free roam."/>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,16">
+              <StackPanel>
+                <Border Style="{StaticResource CardHeadStrip}">
+                  <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Style="{StaticResource HeadAccent}"/>
+                    <TextBlock Style="{StaticResource CardTitle}" Text="LIGHTS"/>
+                  </StackPanel>
+                </Border>
+                <StackPanel x:Name="LightingControlsPanel" Margin="14,12,14,14">
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                    <Button x:Name="DrlButton" Content="FRONT DRL: —" Style="{StaticResource GhostButton}" Height="34" FontSize="11.5" Padding="5,0" IsEnabled="False" ToolTip="Toggle the native daytime-running-light input. Some cars share this circuit with other markers or have no separate DRLs."/>
+                    <Button x:Name="RearDrlButton" Grid.Column="1" Margin="6,0,0,0" Content="REAR DRL: —" Style="{StaticResource GhostButton}" Height="34" FontSize="11.5" Padding="5,0" IsEnabled="False" ToolTip="Toggle verified rear running-light branches, with the engine active. Brake lights remain functional. Headlights, front DRLs and pop-up commands are unchanged."/>
+                    <Button x:Name="HeadlightButton" Grid.Row="1" Margin="0,6,0,0" Content="HEADLIGHTS: —" Style="{StaticResource GhostButton}" Height="34" FontSize="11.5" Padding="5,0" IsEnabled="False" ToolTip="Toggle only verified headlamp outputs, with the engine active. Rear lights, DRLs and the automatic pop-up command are unchanged. High beams remain stock."/>
+                    <Button x:Name="AllLightsButton" Grid.Row="1" Grid.Column="1" Margin="6,6,0,0" Content="ALL LIGHTS: —" Style="{StaticResource GhostButton}" Height="34" FontSize="11.5" Padding="5,0" IsEnabled="False" ToolTip="Toggle the normal headlight circuit and DRLs together. Brake and reverse lights remain functional. High beams are not overridden."/>
+                  </Grid>
+                  <Grid Margin="0,12,0,0">
+                    <CheckBox x:Name="LightFadeCheck" Content="FADE ON / OFF" IsChecked="False" FontSize="11" Margin="0"
+                            Checked="LightFade_Changed" Unchecked="LightFade_Changed" ToolTip="Fade front DRLs, rear running lights, headlights and ALL LIGHTS on/off. Another press reverses the fade. Applies to buttons and bindings; remembers your choice."/>
+                    <TextBlock x:Name="LightFadeDurationText" Text="0.5s" FontSize="11" Foreground="{StaticResource Dim}" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                  </Grid>
+                  <Slider x:Name="LightFadeDurationSlider" Minimum="0.1" Maximum="5" Value="0.5" TickFrequency="0.1" IsSnapToTickEnabled="True"
+                          SmallChange="0.1" LargeChange="0.5" Margin="0,4,0,0" ValueChanged="LightFadeDuration_ValueChanged"
+                          AutomationProperties.Name="Light fade duration in seconds" ToolTip="0.1 to 5 seconds per fade. Changes the duration for the next light toggle."/>
+                  <Separator Margin="0,10,0,10" Background="{StaticResource Line}"/>
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <Button x:Name="DrlColorPickerButton" ClickMode="Press" Style="{StaticResource GhostButton}" Height="34" Margin="0,0,6,0" FontSize="10" Padding="3,0" Click="DrlColorPicker_Click" ToolTip="Choose a DRL color from the chart, including white. Keeps strobe active; Original restores stock and turns RGB and strobe OFF.">
+                      <StackPanel Orientation="Horizontal"><Border x:Name="DrlColorPreview" Width="10" Height="10" CornerRadius="2" Margin="0,0,4,0"/><TextBlock Text="COLOR PICKER"/></StackPanel>
+                    </Button>
+                    <Button x:Name="DrlRgbButton" ClickMode="Press" Grid.Column="1" Content="RGB: OFF" Style="{StaticResource GhostButton}" Height="34" Margin="0,0,6,0" FontSize="10" Padding="3,0" Click="DrlRgb_Click" ToolTip="Fade smoothly through rainbow colors at the selected RGB speed. Click again to return to the prior color. Keeps strobe active. FRONT DRL must be ON."/>
+                    <Button x:Name="DrlStrobeButton" ClickMode="Press" Grid.Column="2" Content="STROBE: OFF" Style="{StaticResource GhostButton}" Height="34" FontSize="10" Padding="3,0" Click="DrlStrobe_Click" ToolTip="Strobe the picked color or RGB fade. Native uses synchronized game timing; uncheck Native for the custom speed slider. OFF keeps the color or RGB; Original restores stock. FRONT DRL and engine must be ON."/>
+                  </Grid>
+                  <TextBlock x:Name="DrlColorModeText" FontSize="11" Foreground="{StaticResource Ink}" Margin="0,8,0,0" Text="COLOR: ORIGINAL" TextWrapping="Wrap"/>
+                  <Grid Margin="0,10,0,0">
+                    <TextBlock Text="DRL BRIGHTNESS" FontSize="11" Foreground="{StaticResource Ink}"/>
+                    <TextBlock x:Name="DrlBrightnessText" Text="100%" FontSize="11" Foreground="{StaticResource Dim}" HorizontalAlignment="Right"/>
+                  </Grid>
+                  <Slider x:Name="DrlBrightnessSlider" Minimum="0" Maximum="400" Value="100" TickFrequency="1" IsSnapToTickEnabled="True" SmallChange="1" LargeChange="10" Margin="0,4,0,0" ValueChanged="DrlBrightness_ValueChanged" ToolTip="Adjust the selected DRL color, RGB fade or strobe from 0 to 400%. 100% keeps the existing color brightness; above 100% boosts emission for dim lamps. Lower values can preserve color in bright lamp centers. Remembers your choice. Original restores stock lights."/>
+                  <Expander x:Name="DrlEffectSettings" Header="DRL EFFECT SETTINGS" Style="{StaticResource LightingExpander}" Margin="0,8,0,0" IsExpanded="False">
+                    <StackPanel Margin="0,10,0,0">
+                      <Grid>
+                        <TextBlock Text="CYCLE SPEED" FontSize="11" Foreground="{StaticResource Ink}"/>
+                        <TextBlock x:Name="DrlRgbSpeedText" Text="3.0s / cycle" FontSize="11" Foreground="{StaticResource Dim}" HorizontalAlignment="Right"/>
+                      </Grid>
+                      <Slider x:Name="DrlRgbSpeedSlider" Minimum="1" Maximum="12" Value="10" TickFrequency="0.5" IsSnapToTickEnabled="True" SmallChange="0.5" LargeChange="1" Margin="0,4,0,0" ValueChanged="DrlRgbSpeed_ValueChanged" ToolTip="Slow to fast: 12 to 1 seconds per full color cycle. Changes speed without restarting the color; remembers your choice. Does not turn RGB on."/>
+                      <CheckBox x:Name="DrlCustomCycleCheck" Content="CUSTOM COLOR CYCLE" Margin="0,10,0,0" Foreground="{StaticResource Ink}" FontSize="11" Checked="DrlCustomCycle_Changed" Unchecked="DrlCustomCycle_Changed" ToolTip="Choose an ordered cycle instead of the full rainbow. Press CYCLE to start."/>
+                      <Button x:Name="DrlCycleEditButton" Content="EDIT CYCLE COLORS…" Style="{StaticResource GhostButton}" Height="32" Margin="0,8,0,0" Click="DrlCycleEdit_Click"/>
+                      <TextBlock x:Name="DrlCycleSummary" Foreground="{StaticResource Dim}" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                      <CheckBox x:Name="DrlNativeStrobeCheck" Content="NATIVE STROBE" IsChecked="True" Margin="0,10,0,0" Foreground="{StaticResource Ink}" FontSize="11" Checked="DrlNativeStrobe_Changed" Unchecked="DrlNativeStrobe_Changed" ToolTip="Use the game's strobe pattern on all mapped DRLs together. Uncheck for custom speed. This option alone does not start flashing; press STROBE to enable it."/>
+                      <StackPanel x:Name="CustomStrobeSettings" Margin="0,8,0,0">
+                        <Grid>
+                          <TextBlock Text="STROBE SPEED" FontSize="11" Foreground="{StaticResource Ink}"/>
+                          <TextBlock x:Name="DrlStrobeSpeedText" Text="4 flashes / sec" FontSize="11" Foreground="{StaticResource Dim}" HorizontalAlignment="Right"/>
+                        </Grid>
+                        <Slider x:Name="DrlStrobeSpeedSlider" Minimum="1" Maximum="20" Value="4" TickFrequency="1" IsSnapToTickEnabled="True" SmallChange="1" LargeChange="2" Margin="0,4,0,0" ValueChanged="DrlStrobeSpeed_ValueChanged" ToolTip="Custom strobe: 1 to 20 flashes per second. Uncheck NATIVE STROBE to use this speed. Remembers your choice; does not start flashing."/>
+                      </StackPanel>
+                    </StackPanel>
+                  </Expander>
+                  <Button x:Name="LightingPresetsButton" Content="LIGHTING PRESETS…" Style="{StaticResource GhostButton}" Height="32" Margin="0,10,0,0" Click="LightingPresets_Click" ToolTip="Save or apply named color, cycle, brightness, speed, strobe and fade settings."/>
+                  <TextBlock x:Name="DrlColorHint" Style="{StaticResource Hint}" Text="Front DRLs must be ON to use effects."/>
+                  <TextBlock x:Name="LightsHint" Style="{StaticResource Hint}" Text="RESET STATE restores original lights."/>
+                  <StackPanel x:Name="SignalsPanel" Visibility="Collapsed">
+                  <Separator Margin="0,10,0,10"/>
+                  <Button x:Name="LeftIndicatorButton" Content="LEFT INDICATOR: —" Style="{StaticResource GhostButton}" Height="34" IsEnabled="False" ToolTip="Toggle the tested left-side native blink sequence. Click again for OFF; another signal mode replaces it. Steam development feature."/>
+                  <Button x:Name="RightIndicatorButton" Content="RIGHT INDICATOR: —" Style="{StaticResource GhostButton}" Height="34" Margin="0,8,0,0" IsEnabled="False" ToolTip="Toggle the tested right-side native blink sequence. Click again for OFF. Unsupported car layouts are disabled."/>
+                  <Button x:Name="HazardsButton" Content="HAZARDS: —" Style="{StaticResource GhostButton}" Height="34" Margin="0,8,0,0" IsEnabled="False" ToolTip="Factory indicator routes flash their authored bulbs. Other mapped cars use synchronized amber DRL hazards, labeled DRL ONLY; FRONT DRL must be ON. DRL hazard OFF returns the previous color/RGB/strobe choice. RESET STATE restores stock."/>
+                  <TextBlock x:Name="SignalsHint" Style="{StaticResource Hint}" Text="Experimental signals: tested cars only. Turn OFF before changing car/scene. RESET STATE restores routing."/>
+                  </StackPanel>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,16">
+              <StackPanel>
+                <Border Style="{StaticResource CardHeadStrip}">
+                  <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Style="{StaticResource HeadAccent}"/>
+                    <TextBlock Style="{StaticResource CardTitle}" Text="HOTKEYS"/>
+                  </StackPanel>
+                </Border>
+                <StackPanel Margin="14,12,14,14">
+                  <Button x:Name="BindModeButton" Content="SET BINDING: OFF" Style="{StaticResource GhostButton}" Height="38" Click="BindMode_Click"/>
+                  <Button x:Name="ClearBindingsButton" Content="CLEAR ALL BINDINGS" Style="{StaticResource GhostButton}" Height="32" Margin="0,10,0,0" Click="ClearBindings_Click"/>
+                  <TextBlock Style="{StaticResource Hint}" Text="Turn on Set Binding, click an action, then press a keyboard key or Xbox button combination. Setting one input replaces only that action's binding for that input; the other input stays untouched. Right-click an action while setting to clear both bindings for it. Bindings fire only while the game is focused."/>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource CardBorder}">
+              <StackPanel>
+                <Border Style="{StaticResource CardHeadStrip}">
+                  <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Style="{StaticResource HeadAccent}"/>
+                    <TextBlock Style="{StaticResource CardTitle}" Text="STATUS"/>
+                  </StackPanel>
+                </Border>
+                <Border Margin="14,12,14,14" Background="{StaticResource Card2}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8" Padding="12,10">
+                  <TextBlock x:Name="ControlsStatusText" Text="checking…" Foreground="{StaticResource Dim}"
+                             FontFamily="Consolas" FontSize="11.5" TextWrapping="Wrap" MinHeight="46"/>
+                </Border>
+              </StackPanel>
+            </Border>
+
+          </StackPanel>
+        </ScrollViewer>
+      </Grid>
+    </Grid>
+  </Border>
+</Window>
